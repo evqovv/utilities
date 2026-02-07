@@ -59,9 +59,15 @@ public:
         other.capacity_ = 0;
     }
 
-    vector(size_type count, const value_type & = value_type(), const Allocator &allocator = Allocator())
+    explicit vector(size_type count, const value_type &value = value_type(), const Allocator &allocator = Allocator())
         : allocator_(allocator)
     {
+        reserve(count * 2);
+        for (size_type i = 0; i != count; ++i)
+        {
+            ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + i, value);
+        }
+        size_ = count;
     }
 
     ~vector()
@@ -193,6 +199,11 @@ public:
             ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + i, list[i]);
         }
         size_ = list.size();
+    }
+
+    allocator_type get_allocator() const
+    {
+        return allocator_;
     }
 
     reference at(size_type pos)
@@ -382,6 +393,26 @@ public:
         return capacity_;
     }
 
+    void shrink_to_fit()
+    {
+        if (size_ == capacity_)
+        {
+            return;
+        }
+
+        value_type *new_data = allocator_.allocate(size_);
+        for (size_type i = 0; i != size_; ++i)
+        {
+            ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, new_data + i,
+                                                                             ::std::move(data_ + i));
+        }
+        for (size_type i = 0; i != size_; ++i)
+        {
+            ::std::allocator_traits<::std::allocator<value_type>>::destroy(allocator_, new_data + i);
+        }
+        data_ = new_data;
+    }
+
     void clear() noexcept
     {
         for (size_type i = 0; i != size_; ++i)
@@ -398,14 +429,14 @@ public:
             reserve(capacity_ * 2 + 1);
         }
 
-        size_type insert_pos = cend() - pos;
-        for (size_type i = size_; i != insert_pos; --i)
+        size_type idx = cend() - pos;
+        for (size_type i = size_; i != idx; --i)
         {
             ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + i,
                                                                              ::std::move(data_ + i - 1));
             ::std::allocator_traits<::std::allocator<value_type>>::destroy(allocator_, *(data_ + i - 1));
         }
-        ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + insert_pos, value);
+        ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + idx, value);
         ++size_;
     }
 
@@ -416,15 +447,14 @@ public:
             reserve(capacity_ * 2 + 1);
         }
 
-        size_type insert_pos = cend() - pos;
+        size_type idx = cend() - pos;
         for (size_type i = size_; i != (cend() - pos); --i)
         {
             ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + i,
                                                                              ::std::move(data_ + i - 1));
             ::std::allocator_traits<::std::allocator<value_type>>::destroy(allocator_, *(data_ + i - 1));
         }
-        ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + insert_pos,
-                                                                         ::std::move(value));
+        ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + idx, ::std::move(value));
         ++size_;
     }
 
@@ -435,7 +465,7 @@ public:
             reserve(capacity_ * 2 + count);
         }
 
-        size_type insert_pos = cend() - pos;
+        size_type idx = cend() - pos;
         for (size_type i = size_ + count - 1; i != (cend() - pos); --i)
         {
             ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + i,
@@ -443,9 +473,9 @@ public:
             ::std::allocator_traits<::std::allocator<value_type>>::destroy(allocator_, *(data_ + i - 1));
         }
 
-        for (size_type i = insert_pos; i < insert_pos + count; ++i)
+        for (size_type i = idx; i < idx + count; ++i)
         {
-            ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + insert_pos, value);
+            ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + idx, value);
         }
         size_ += count;
     }
@@ -459,7 +489,7 @@ public:
             reserve(capacity_ * 2 + count);
         }
 
-        size_type insert_pos = cend() - pos;
+        size_type idx = cend() - pos;
         for (size_type i = size_ + count - 1; i != (cend() - pos); --i)
         {
             ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + i,
@@ -467,10 +497,9 @@ public:
             ::std::allocator_traits<::std::allocator<value_type>>::destroy(allocator_, *(data_ + i - 1));
         }
 
-        for (size_type i = insert_pos; i < insert_pos + count; ++i)
+        for (size_type i = idx; i < idx + count; ++i)
         {
-            ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + insert_pos,
-                                                                             *(first + i));
+            ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + idx, *(first + i));
         }
         size_ += count;
     }
@@ -482,19 +511,38 @@ public:
         {
             reserve(capacity_ * 2 + count);
         }
-        size_type insert_pos = cend() - pos;
+        size_type idx = cend() - pos;
         for (size_type i = size_ + count - 1; i != (cend() - pos); --i)
         {
             ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + i,
-                                                                             ::std::move(data_ + i - 1));
+                                                                             ::std::move(*(data_ + i - 1)));
             ::std::allocator_traits<::std::allocator<value_type>>::destroy(allocator_, *(data_ + i - 1));
         }
 
-        for (size_type i = insert_pos; i < insert_pos + count; ++i)
+        for (size_type i = idx; i < idx + count; ++i)
         {
-            ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + insert_pos, list[i]);
+            ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + idx, list[i]);
         }
         size_ += count;
+    }
+
+    template <class... Args>
+    iterator emplace(const_iterator pos, Args &&...args)
+    {
+        if (size_ == capacity_)
+        {
+            resize(capacity_ * 2);
+        }
+        size_type idx = cend() - pos;
+        for (size_type i = size_; i != (cend() - pos); --i)
+        {
+            ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_ + i,
+                                                                             ::std::move(*(data_ + i)));
+            ::std::allocator_traits<::std::allocator<value_type>>::destroy(allocator_, data_ + i);
+        }
+        ::std::allocator_traits<::std::allocator<value_type>>::construct(allocator_, data_,
+                                                                         ::std::forward<Args>(args)...);
+        ++size_;
     }
 
     iterator erase(const_iterator pos)
@@ -627,6 +675,11 @@ public:
 
     void swap(vector &other)
     {
+        using ::std::swap;
+        swap(data_, other.data_);
+        swap(size_, other.size_);
+        swap(capacity_, other.capacity_);
+        swap(allocator_, other.allocator_);
     }
 
 private:
