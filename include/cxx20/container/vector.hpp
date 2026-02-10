@@ -423,32 +423,32 @@ public:
 
     [[nodiscard]] constexpr reverse_iterator rbegin() noexcept
     {
-        return ::std::make_reverse_iterator(data_ + size_);
+        return ::std::make_reverse_iterator(end());
     }
 
     [[nodiscard]] constexpr const_reverse_iterator rbegin() const noexcept
     {
-        return ::std::make_reverse_iterator(data_);
+        return ::std::make_reverse_iterator(end());
     }
 
     [[nodiscard]] constexpr const_reverse_iterator crbegin() const noexcept
     {
-        return ::std::make_reverse_iterator(data_);
+        return ::std::make_reverse_iterator(cend());
     }
 
     [[nodiscard]] constexpr reverse_iterator rend() noexcept
     {
-        return ::std::make_reverse_iterator(data_ + size_);
+        return ::std::make_reverse_iterator(begin());
     }
 
     [[nodiscard]] constexpr const_reverse_iterator rend() const noexcept
     {
-        return ::std::make_reverse_iterator(data_);
+        return ::std::make_reverse_iterator(begin());
     }
 
     [[nodiscard]] constexpr const_reverse_iterator crend() const noexcept
     {
-        return ::std::make_reverse_iterator(data_);
+        return ::std::make_reverse_iterator(cbegin());
     }
 
     [[nodiscard]] constexpr bool empty() const noexcept
@@ -488,7 +488,6 @@ public:
         alloc_guard guard(alloc_, new_data, grown_cap);
 
         vector_detail::move_if_noexcept(alloc_, begin(), end(), new_data, new_data + size_);
-
         vector_detail::destroy(alloc_, begin(), end());
 
         alloc_.deallocate(data_, cap_);
