@@ -20,19 +20,19 @@ namespace vector_detail
 template <typename T, typename Alloc>
 class throw_guard
 {
+    Alloc &a_;
     T first_;
     T &cur_;
-    Alloc &a_;
     bool flag_ = true;
 
 public:
-    throw_guard(T &res, Alloc &a) noexcept : first_(res), cur_(res), a_(a)
+    throw_guard(Alloc &a, T &res) noexcept : a_(a), first_(res), cur_(res)
     {
     }
 
     ~throw_guard()
     {
-        if (flag_)
+        if (flag_) [[unlikely]]
         {
             for (; first_ != cur_; ++first_)
             {
@@ -50,8 +50,8 @@ public:
 template <typename InIt, typename OutIt, typename Alloc>
 void copy(Alloc &a, InIt b1, InIt e1, OutIt b2, OutIt e2)
 {
-    throw_guard guard(b2, a);
-    for (; b1 != e1 && b2 != e2; (void)++b1, ((void)++b2))
+    throw_guard guard(a, b2);
+    for (; b1 != e1 && b2 != e2; (void)++b1, (void)++b2)
     {
         ::std::allocator_traits<Alloc>::construct(a, ::std::to_address(b2), *b1);
     }
@@ -61,7 +61,7 @@ void copy(Alloc &a, InIt b1, InIt e1, OutIt b2, OutIt e2)
 template <typename It, typename T, typename Alloc>
 void fill(Alloc &a, It b, It e, const T &value)
 {
-    throw_guard guard(b, a);
+    throw_guard guard(a, b);
     for (; b != e; (void)++b)
     {
         ::std::allocator_traits<Alloc>::construct(a, ::std::to_address(b), value);
@@ -70,12 +70,12 @@ void fill(Alloc &a, It b, It e, const T &value)
 }
 
 template <typename InIt, typename OutIt, typename Alloc>
-void move(Alloc &a, InIt b1, InIt e1, OutIt b2, OutIt e2)
+void move_if_noexcept(Alloc &a, InIt b1, InIt e1, OutIt b2, OutIt e2)
 {
-    throw_guard guard(b2, a);
+    throw_guard guard(a, b2);
     for (; b1 != e1 && b2 != e2; (void)++b1, ((void)++b2))
     {
-        ::std::allocator_traits<Alloc>::construct(a, ::std::to_address(b2), ::std::move(*b1));
+        ::std::allocator_traits<Alloc>::construct(a, ::std::to_address(b2), ::std::move_if_noexcept(*b1));
     }
     guard.release();
 }
@@ -83,7 +83,7 @@ void move(Alloc &a, InIt b1, InIt e1, OutIt b2, OutIt e2)
 template <typename It, typename Alloc>
 void fill(Alloc &a, It b, It e)
 {
-    throw_guard guard(b, a);
+    throw_guard guard(a, b);
     for (; b != e; (void)++b)
     {
         ::std::allocator_traits<Alloc>::construct(a, ::std::to_address(b));
@@ -132,11 +132,37 @@ public:
     using const_reverse_iterator = ::std::reverse_iterator<const_iterator>;
 
 private:
-    pointer data_;
+    class alloc_guard
+    {
+        Alloc &a_;
+        pointer data_;
+        size_type cap_;
+        bool flag_ = true;
 
-    size_type size_;
+    public:
+        alloc_guard(Alloc &a, pointer data, size_type cap) noexcept : a_(a), data_(data), cap_(cap)
+        {
+        }
 
-    size_type cap_;
+        void release() noexcept
+        {
+            flag_ = false;
+        }
+
+        ~alloc_guard()
+        {
+            if (flag_) [[likely]]
+            {
+                a_.deallocate(data_, cap_);
+            }
+        }
+    };
+
+    pointer data_{};
+
+    size_type size_{};
+
+    size_type cap_{};
 
     [[no_unique_address]] Alloc alloc_;
 
@@ -154,6 +180,11 @@ public:
         reserve(init.size());
         vector_detail::copy(alloc_, init.begin(), init.end(), data_, data_ + init.size());
         size_ = init.size();
+    }
+
+    vector(const vector &other)
+    {
+        assign(other.cbegin(), other.cend());
     }
 
     vector(vector &&other) noexcept
@@ -183,10 +214,7 @@ public:
     {
         if (::std::addressof(other) != this) [[likely]]
         {
-            clear();
-            reserve(other.size_);
-            vector_detail::move(alloc_, data_, data_ + other.size_, other.cbegin(), other.cend());
-            size_ = other.size_;
+            assign(other.cbegin(), other.cend());
         }
         return *this;
     }
@@ -212,23 +240,50 @@ public:
     vector &operator=(::std::initializer_list<value_type> list)
     {
         assign(list.cbegin(), list.cend());
+        return *this;
     }
 
     void assign(size_type count, const T &value)
     {
-        clear();
         reserve(count);
-        vector_detail::fill(alloc_, data_, data_ + count, value);
+        size_type i = 0;
+        for (; i != size_; ++i)
+        {
+            data_[i] = value;
+        }
+
+        if (count < size_)
+        {
+            vector_detail::destroy(alloc_, data_ + count, data_ + size_);
+        }
+
+        if (count > size_)
+        {
+            vector_detail::fill(alloc_, data_ + i, data_ + count, value);
+        }
         size_ = count;
     }
 
     template <typename InputIt>
     void assign(InputIt first, InputIt last)
     {
-        clear();
         size_type diff = last - first;
         reserve(diff);
-        vector_detail::copy(alloc_, data_, data_ + diff, first, last);
+        size_type i = 0;
+        for (; i != size_; ++i, ++first)
+        {
+            data_[i] = first;
+        }
+
+        if (diff < size_)
+        {
+            vector_detail::destroy(alloc_, data_ + diff, data_ + size_);
+        }
+
+        if (diff > size_)
+        {
+            vector_detail::copy(alloc_, data_ + i, data_ + diff, first, last);
+        }
         size_ = diff;
     }
 
@@ -240,24 +295,6 @@ public:
     [[nodiscard]] allocator_type get_allocator() const noexcept
     {
         return alloc_;
-    }
-
-    [[nodiscard]] reference at(size_type pos)
-    {
-        if (size_ <= pos) [[unlikely]]
-        {
-            ::std::abort();
-        }
-        return *(data_ + pos);
-    }
-
-    [[nodiscard]] const_reference at(size_type pos) const
-    {
-        if (size_ <= pos) [[unlikely]]
-        {
-            ::std::abort();
-        }
-        return *(data_ + pos);
     }
 
     [[nodiscard]] reference operator[](size_type pos)
@@ -275,6 +312,16 @@ public:
         {
             ::std::abort();
         }
+        return *(data_ + pos);
+    }
+
+    [[nodiscard]] reference index_unchecked(size_type pos)
+    {
+        return *(data_ + pos);
+    }
+
+    [[nodiscard]] const_reference index_unchecked(size_type pos) const
+    {
         return *(data_ + pos);
     }
 
@@ -296,6 +343,16 @@ public:
         return *data_;
     }
 
+    [[nodiscard]] constexpr reference front_unchecked() noexcept
+    {
+        return *data_;
+    }
+
+    [[nodiscard]] constexpr const_reference front_unchecked() const noexcept
+    {
+        return *data_;
+    }
+
     [[nodiscard]] constexpr reference back() noexcept
     {
         if (empty()) [[unlikely]]
@@ -311,6 +368,16 @@ public:
         {
             ::std::abort();
         }
+        return *(data_ + size_ - 1);
+    }
+
+    [[nodiscard]] constexpr reference back_unchecked() noexcept
+    {
+        return *(data_ + size_ - 1);
+    }
+
+    [[nodiscard]] constexpr const_reference back_unchecked() const noexcept
+    {
         return *(data_ + size_ - 1);
     }
 
@@ -410,24 +477,26 @@ public:
         {
             return;
         }
-        size_type base_cap = cap_ == 0 ? 8 : cap_;
 
-        size_type grown_cap = base_cap + base_cap / 2;
+        size_type grown_cap = cap_ < 8 ? 8 : cap_;
         while (grown_cap < required_cap)
         {
             grown_cap += grown_cap / 2;
         }
 
-        pointer old_ptr = data_;
-        size_type prev_cap = cap_;
+        pointer new_data = alloc_.allocate(grown_cap);
+        alloc_guard guard(alloc_, new_data, grown_cap);
 
-        data_ = alloc_.allocate(grown_cap);
+        vector_detail::move_if_noexcept(alloc_, begin(), end(), new_data, new_data + size_);
+
+        vector_detail::destroy(alloc_, begin(), end());
+
+        alloc_.deallocate(data_, cap_);
+
+        data_ = new_data;
         cap_ = grown_cap;
 
-        vector_detail::move(alloc_, old_ptr, old_ptr + size_, data_, data_ + size_);
-        vector_detail::destroy(alloc_, old_ptr, old_ptr + size_);
-
-        alloc_.deallocate(old_ptr, prev_cap);
+        guard.release();
     }
 
     void shrink_to_fit()
@@ -437,16 +506,19 @@ public:
             return;
         }
 
-        pointer old_data = data_;
-        size_type old_cap = cap_;
+        pointer new_data = alloc_.allocate(size_);
+        alloc_guard guard(alloc_, new_data, size_);
 
-        data_ = alloc_.allocate(size_);
+        vector_detail::move_if_noexcept(alloc_, begin(), end(), new_data, new_data + size_);
+
+        vector_detail::destroy(alloc_, begin(), end());
+
+        alloc_.deallocate(data_, cap_);
+
+        data_ = new_data;
         cap_ = size_;
 
-        vector_detail::move(alloc_, old_data, old_data + size_, data_, data_ + size_);
-        vector_detail::destroy(alloc_, old_data, old_data + size_);
-
-        alloc_.deallocate(old_data, old_cap);
+        guard.release();
     }
 
     void clear() noexcept
@@ -467,49 +539,52 @@ public:
 
     iterator insert(const_iterator pos, size_type count, const T &value)
     {
-        reserve(size_ + count);
         size_type pos_i = pos - cbegin();
+        reserve(size_ + count);
         for (size_type i = size_ + count - 1; i != pos_i; --i)
         {
-            vector_detail::construct_at(alloc_, data_ + i, ::std::move(data_[i - 1]));
-            vector_detail::destroy_at(alloc_, data_ + i - 1);
+            vector_detail::construct_at(alloc_, data_ + i, ::std::move(data_[i - count]));
+            vector_detail::destroy_at(alloc_, data_ + i - count - 1);
         }
-        vector_detail::fill(alloc_, pos, pos + count, value);
+        vector_detail::fill(alloc_, data_ + pos_i, data_ + pos_i + count, value);
         size_ += count;
+        return {data_ + pos_i};
     }
 
     template <typename InputIt>
     iterator insert(const_iterator pos, InputIt first, InputIt last)
     {
+        size_type pos_i = pos - cbegin();
         size_type diff = last - first;
         reserve(size_ + diff);
-        size_type pos_i = pos - cbegin();
         for (size_type i = size_ + diff - 1; i != pos_i; --i)
         {
-            vector_detail::construct_at(alloc_, data_ + i, ::std::move(data_[i - 1]));
-            vector_detail::destroy_at(alloc_, data_ + i - 1);
+            vector_detail::construct_at(alloc_, data_ + i, ::std::move(data_[i - diff]));
+            vector_detail::destroy_at(alloc_, data_ + i - diff - 1);
         }
-        vector_detail::copy(alloc_, pos, pos + diff, first, last);
+        vector_detail::copy(alloc_, data_ + pos_i, data_ + pos_i + diff, first, last);
         size_ += diff;
+        return {data_ + pos_i};
     }
 
     iterator insert(const_iterator pos, ::std::initializer_list<T> list)
     {
-        insert(pos, list.cbegin(), list.cend());
+        return insert(pos, list.cbegin(), list.cend());
     }
 
     template <typename... Args>
     iterator emplace(const_iterator pos, Args &&...args)
     {
-        reserve(size_ + 1);
         size_type pos_i = pos - cbegin();
-        for (size_type i = size_ - 1; i != pos_i; --i)
+        reserve(size_ + 1);
+        for (size_type i = size_; i != pos_i; --i)
         {
             vector_detail::construct_at(alloc_, data_ + i, ::std::move(data_[i - 1]));
             vector_detail::destroy_at(alloc_, data_ + i - 1);
         }
-        vector_detail::construct_at(alloc_, pos, ::std::forward<Args>(args)...);
+        vector_detail::construct_at(alloc_, data_ + pos_i, ::std::forward<Args>(args)...);
         ++size_;
+        return {data_ + pos_i};
     }
 
     iterator erase(const_iterator pos)
@@ -528,8 +603,8 @@ public:
         {
             vector_detail::destroy_at(alloc_, data_ + i);
         }
-
         size_ -= diff;
+        return const_cast<iterator>(first);
     }
 
     void push_back(const T &value)
@@ -548,6 +623,7 @@ public:
         reserve(size_ + 1);
         vector_detail::construct_at(alloc_, data_ + size_, ::std::forward<Args>(args)...);
         ++size_;
+        return back();
     }
 
     void pop_back()
@@ -564,7 +640,7 @@ public:
     {
         if (new_size > size_)
         {
-            resize(new_size);
+            reserve(new_size);
             vector_detail::fill(alloc_, data_ + size_, data_ + new_size);
         }
         if (new_size < size_)
@@ -578,7 +654,7 @@ public:
     {
         if (new_size > size_)
         {
-            resize(new_size);
+            reserve(new_size);
             vector_detail::fill(alloc_, data_ + size_, data_ + new_size, value);
         }
         if (new_size < size_)
