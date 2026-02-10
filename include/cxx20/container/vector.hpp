@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
@@ -90,6 +91,18 @@ void fill(Alloc &a, It b, It e)
     guard.release();
 }
 
+template <typename It, typename... Args, typename Alloc>
+void construct_at(Alloc &a, It pos, Args... args)
+{
+    ::std::allocator_traits<Alloc>::construct(a, ::std::to_address(pos), ::std::forward<Args>(args)...);
+}
+
+template <typename It, typename Alloc>
+void destroy_at(Alloc &a, It pos)
+{
+    ::std::allocator_traits<Alloc>::destroy(a, ::std::to_address(pos));
+}
+
 template <typename It, typename Alloc>
 void destroy(Alloc &a, It b, It e) noexcept
 {
@@ -127,10 +140,8 @@ private:
 
     [[no_unique_address]] Alloc alloc_;
 
-    using atraits_t = ::std::allocator_traits<allocator_type>;
-
 public:
-    explicit vector(const Alloc &allocator) noexcept : alloc_(allocator)
+    explicit vector(const Alloc &alloc) noexcept : alloc_(alloc)
     {
     }
 
@@ -138,10 +149,10 @@ public:
     {
     }
 
-    vector(::std::initializer_list<value_type> init, const Alloc &allocator = Alloc())
+    vector(::std::initializer_list<value_type> init, const Alloc &alloc = Alloc())
     {
         reserve(init.size());
-        vector_detail::copy(alloc_, data_, data_ + init.size(), init.cbegin(), init.cend());
+        vector_detail::copy(alloc_, init.begin(), init.end(), data_, data_ + init.size());
         size_ = init.size();
     }
 
@@ -151,8 +162,8 @@ public:
     {
     }
 
-    explicit vector(size_type count, const value_type &value = value_type(), const Alloc &allocator = Alloc())
-        : alloc_(allocator)
+    explicit vector(size_type count, const value_type &value = value_type(), const Alloc &alloc = Alloc())
+        : alloc_(alloc)
     {
         reserve(count);
         vector_detail::fill(alloc_, data_, data_ + count, value);
@@ -200,14 +211,7 @@ public:
 
     vector &operator=(::std::initializer_list<value_type> list)
     {
-        clear();
-        reserve(list.size());
-
-        for (size_type i = 0; i != list.size(); ++i)
-        {
-            atraits_t::construct(alloc_, data_ + i, list[i]);
-        }
-        size_ = list.size();
+        assign(list.cbegin(), list.cend());
     }
 
     void assign(size_type count, const T &value)
@@ -218,7 +222,7 @@ public:
         size_ = count;
     }
 
-    template <class InputIt>
+    template <typename InputIt>
     void assign(InputIt first, InputIt last)
     {
         clear();
@@ -233,7 +237,7 @@ public:
         assign(list.cbegin(), list.cend());
     }
 
-    [[nodiscard]] allocator_type get_allocator() const
+    [[nodiscard]] allocator_type get_allocator() const noexcept
     {
         return alloc_;
     }
@@ -274,7 +278,7 @@ public:
         return *(data_ + pos);
     }
 
-    [[nodiscard]] reference front()
+    [[nodiscard]] constexpr reference front() noexcept
     {
         if (empty()) [[unlikely]]
         {
@@ -283,7 +287,7 @@ public:
         return *data_;
     }
 
-    [[nodiscard]] const_reference front() const
+    [[nodiscard]] constexpr const_reference front() const noexcept
     {
         if (empty()) [[unlikely]]
         {
@@ -292,7 +296,7 @@ public:
         return *data_;
     }
 
-    [[nodiscard]] reference back()
+    [[nodiscard]] constexpr reference back() noexcept
     {
         if (empty()) [[unlikely]]
         {
@@ -301,7 +305,7 @@ public:
         return *(data_ + size_ - 1);
     }
 
-    [[nodiscard]] const_reference back() const
+    [[nodiscard]] constexpr const_reference back() const noexcept
     {
         if (empty()) [[unlikely]]
         {
@@ -310,72 +314,72 @@ public:
         return *(data_ + size_ - 1);
     }
 
-    [[nodiscard]] value_type *data()
+    [[nodiscard]] constexpr pointer data() noexcept
     {
         return data_;
     }
 
-    [[nodiscard]] const value_type *data() const
+    [[nodiscard]] constexpr const_pointer data() const noexcept
     {
         return data_;
     }
 
-    [[nodiscard]] iterator begin()
+    [[nodiscard]] constexpr iterator begin() noexcept
     {
         return data_;
     }
 
-    [[nodiscard]] const_iterator begin() const
+    [[nodiscard]] constexpr const_iterator begin() const noexcept
     {
         return data_;
     }
 
-    [[nodiscard]] const_iterator cbegin() const noexcept
+    [[nodiscard]] constexpr const_iterator cbegin() const noexcept
     {
         return data_;
     }
 
-    [[nodiscard]] iterator end()
+    [[nodiscard]] constexpr iterator end() noexcept
     {
         return data_ + size_;
     }
 
-    [[nodiscard]] const_iterator end() const
+    [[nodiscard]] constexpr const_iterator end() const noexcept
     {
         return data_ + size_;
     }
 
-    [[nodiscard]] const_iterator cend() const noexcept
+    [[nodiscard]] constexpr const_iterator cend() const noexcept
     {
         return data_ + size_;
     }
 
-    [[nodiscard]] reverse_iterator rbegin()
+    [[nodiscard]] constexpr reverse_iterator rbegin() noexcept
     {
         return ::std::make_reverse_iterator(data_ + size_);
     }
 
-    [[nodiscard]] const_reverse_iterator rbegin() const
+    [[nodiscard]] constexpr const_reverse_iterator rbegin() const noexcept
     {
         return ::std::make_reverse_iterator(data_);
     }
 
-    [[nodiscard]] const_reverse_iterator crbegin() const noexcept
+    [[nodiscard]] constexpr const_reverse_iterator crbegin() const noexcept
     {
         return ::std::make_reverse_iterator(data_);
     }
 
-    [[nodiscard]] reverse_iterator rend()
+    [[nodiscard]] constexpr reverse_iterator rend() noexcept
     {
         return ::std::make_reverse_iterator(data_ + size_);
     }
 
-    [[nodiscard]] const_reverse_iterator rend() const
+    [[nodiscard]] constexpr const_reverse_iterator rend() const noexcept
     {
         return ::std::make_reverse_iterator(data_);
     }
 
-    [[nodiscard]] const_reverse_iterator crend() const noexcept
+    [[nodiscard]] constexpr const_reverse_iterator crend() const noexcept
     {
         return ::std::make_reverse_iterator(data_);
     }
@@ -393,6 +397,11 @@ public:
     [[nodiscard]] constexpr size_type max_size() const noexcept
     {
         return ::std::numeric_limits<::std::size_t>::max() / sizeof(value_type);
+    }
+
+    [[nodiscard]] constexpr size_type capacity() const noexcept
+    {
+        return cap_;
     }
 
     void reserve(size_type required_cap)
@@ -421,11 +430,6 @@ public:
         alloc_.deallocate(old_ptr, prev_cap);
     }
 
-    [[nodiscard]] constexpr size_type capacity() const noexcept
-    {
-        return cap_;
-    }
-
     void shrink_to_fit()
     {
         if (size_ == cap_) [[unlikely]]
@@ -447,7 +451,7 @@ public:
 
     void clear() noexcept
     {
-        vector_detail::destroy(begin(), end());
+        vector_detail::destroy(alloc_, begin(), end());
         size_ = 0;
     }
 
@@ -464,24 +468,26 @@ public:
     iterator insert(const_iterator pos, size_type count, const T &value)
     {
         reserve(size_ + count);
-        for (size_type i = size_ + count - 1; i != pos; --i)
+        size_type pos_i = pos - cbegin();
+        for (size_type i = size_ + count - 1; i != pos_i; --i)
         {
-            atraits_t::construct(::std::to_address(data_ + i), ::std::move(data_[i - 1]));
-            atraits_t::destroy(::std::to_address(data_ + i - 1));
+            vector_detail::construct_at(alloc_, data_ + i, ::std::move(data_[i - 1]));
+            vector_detail::destroy_at(alloc_, data_ + i - 1);
         }
         vector_detail::fill(alloc_, pos, pos + count, value);
         size_ += count;
     }
 
-    template <class InputIt>
+    template <typename InputIt>
     iterator insert(const_iterator pos, InputIt first, InputIt last)
     {
         size_type diff = last - first;
         reserve(size_ + diff);
-        for (size_type i = size_ + diff - 1; i != pos; --i)
+        size_type pos_i = pos - cbegin();
+        for (size_type i = size_ + diff - 1; i != pos_i; --i)
         {
-            atraits_t::construct(::std::to_address(data_ + i), ::std::move(data_[i - 1]));
-            atraits_t::destroy(::std::to_address(data_ + i - 1));
+            vector_detail::construct_at(alloc_, data_ + i, ::std::move(data_[i - 1]));
+            vector_detail::destroy_at(alloc_, data_ + i - 1);
         }
         vector_detail::copy(alloc_, pos, pos + diff, first, last);
         size_ += diff;
@@ -492,17 +498,17 @@ public:
         insert(pos, list.cbegin(), list.cend());
     }
 
-    template <class... Args>
+    template <typename... Args>
     iterator emplace(const_iterator pos, Args &&...args)
     {
         reserve(size_ + 1);
-        size_type idx = pos - cbegin();
-        for (size_type i = size_ - 1; i != pos; --i)
+        size_type pos_i = pos - cbegin();
+        for (size_type i = size_ - 1; i != pos_i; --i)
         {
-            atraits_t::construct(::std::to_address(data_ + i), ::std::move(data_[i - 1]));
-            atraits_t::destroy(::std::to_address(data_ + i - 1));
+            vector_detail::construct_at(alloc_, data_ + i, ::std::move(data_[i - 1]));
+            vector_detail::destroy_at(alloc_, data_ + i - 1);
         }
-        atraits_t::construct(alloc_, data_ + idx, ::std::forward<Args>(args)...);
+        vector_detail::construct_at(alloc_, pos, ::std::forward<Args>(args)...);
         ++size_;
     }
 
@@ -520,7 +526,7 @@ public:
         }
         for (size_type i = size_ - diff; i != size_; ++i)
         {
-            atraits_t::destroy(::std::to_address(data_ + i));
+            vector_detail::destroy_at(alloc_, data_ + i);
         }
 
         size_ -= diff;
@@ -540,7 +546,7 @@ public:
     reference emplace_back(Args &&...args)
     {
         reserve(size_ + 1);
-        atraits_t::construct(alloc_, ::std::to_address(data_ + size_), ::std::forward<Args>(args)...);
+        vector_detail::construct_at(alloc_, data_ + size_, ::std::forward<Args>(args)...);
         ++size_;
     }
 
@@ -550,7 +556,7 @@ public:
         {
             ::std::abort();
         }
-        atraits_t::destroy(alloc_, ::std::to_address(data_ + size_ - 1));
+        vector_detail::destroy_at(alloc_, data_ + size_ - 1);
         --size_;
     }
 
@@ -592,6 +598,106 @@ public:
         swap(alloc_, other.alloc_);
     }
 };
+
+template <typename T, typename Alloc>
+void swap(vector<T, Alloc> &lhs, vector<T, Alloc> &rhs) noexcept(noexcept(lhs.swap(rhs)))
+{
+    lhs.swap(rhs);
+}
+
+template <typename T, typename Alloc>
+bool operator==(const vector<T, Alloc> &lhs, const vector<T, Alloc> &rhs)
+{
+    if (lhs.size() != rhs.size())
+    {
+        return false;
+    }
+
+    for (decltype(lhs.size()) i = 0; i != lhs.size(); ++i)
+    {
+        if (lhs[i] != rhs[i])
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+template <class T, class Alloc>
+constexpr auto operator<=>(const vector<T, Alloc> &lhs, const vector<T, Alloc> &rhs)
+{
+    decltype(lhs.size()) min_size = (lhs.size() < rhs.size()) ? lhs.size() : rhs.size();
+    for (decltype(lhs.size()) i = 0; i != min_size; ++i)
+    {
+        auto cmp = lhs[i] <=> rhs[i];
+        if (cmp != 0)
+        {
+            return cmp;
+        }
+    }
+    return lhs.size() <=> rhs.size();
+}
+
+template <typename T, typename Alloc, typename U = T>
+constexpr typename vector<T, Alloc>::size_type erase(vector<T, Alloc> &c, const U &value)
+{
+    auto old_size = c.size();
+
+    auto first = c.begin();
+    auto last = c.end();
+
+    first = ::std::find(first, last, value);
+
+    if (first == last)
+    {
+        return 0;
+    }
+
+    auto dest = first;
+    ++first;
+    for (; first != last; ++first)
+    {
+        if (*first != value)
+        {
+            *dest = ::std::move(*first);
+            ++dest;
+        }
+    }
+
+    c.erase(dest, last);
+    return old_size - c.size();
+}
+
+template <typename T, typename Alloc, typename Pred>
+constexpr typename vector<T, Alloc>::size_type erase_if(vector<T, Alloc> &c, Pred pred)
+{
+    auto old_size = c.size();
+
+    auto first = c.begin();
+    auto last = c.end();
+
+    first = ::std::find_if(first, last, pred);
+
+    if (first == last)
+    {
+        return 0;
+    }
+
+    auto dest = first;
+    ++first;
+    for (; first != last; ++first)
+    {
+        if (!pred(*first))
+        {
+            *dest = ::std::move(*first);
+            ++dest;
+        }
+    }
+
+    c.erase(dest, last);
+    return old_size - c.size();
+}
 } // namespace cxx20
 } // namespace utils
 } // namespace evqovv
