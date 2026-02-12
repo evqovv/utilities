@@ -18,7 +18,7 @@ namespace cxx20
 namespace vector_detail
 {
 template <typename It, typename Alloc>
-class throw_guard
+class construction_guard
 {
     Alloc &a_;
     It start_;
@@ -26,11 +26,11 @@ class throw_guard
     bool flag_ = true;
 
 public:
-    throw_guard(Alloc &a, It &cur) noexcept : a_(a), start_(cur), cur_(cur)
+    construction_guard(Alloc &a, It &cur) noexcept : a_(a), start_(cur), cur_(cur)
     {
     }
 
-    ~throw_guard()
+    ~construction_guard()
     {
         if (flag_) [[unlikely]]
         {
@@ -47,10 +47,47 @@ public:
     }
 };
 
+template <typename Alloc>
+class raw_memory
+{
+    using atraits_t = ::std::allocator_traits<Alloc>;
+    using pointer = typename atraits_t::pointer;
+    using size_type = typename atraits_t::size_type;
+
+    Alloc &a_;
+    pointer data_{};
+    size_type cap_{};
+    bool flag_ = true;
+
+public:
+    raw_memory(Alloc &a, size_type cap) : a_(a), data_(a.allocate(cap)), cap_(cap)
+    {
+    }
+
+    ~raw_memory()
+    {
+        if (flag_ && data_) [[unlikely]]
+        {
+            a_.deallocate(data_, cap_);
+        }
+    }
+
+    pointer release() noexcept
+    {
+        flag_ = false;
+        return data_;
+    }
+
+    [[nodiscard]] pointer get() noexcept
+    {
+        return data_;
+    }
+};
+
 template <typename InIt, typename OutIt, typename Alloc>
 void uninitialized_copy(Alloc &a, InIt b1, InIt e1, OutIt b2)
 {
-    throw_guard guard(a, b2);
+    construction_guard guard(a, b2);
     for (; b1 != e1; (void)++b1, (void)++b2)
     {
         ::std::allocator_traits<Alloc>::construct(a, ::std::to_address(b2), *b1);
@@ -61,7 +98,7 @@ void uninitialized_copy(Alloc &a, InIt b1, InIt e1, OutIt b2)
 template <typename It, typename T, typename Alloc>
 void uninitialized_fill(Alloc &a, It b, It e, const T &value)
 {
-    throw_guard guard(a, b);
+    construction_guard guard(a, b);
     for (; b != e; (void)++b)
     {
         ::std::allocator_traits<Alloc>::construct(a, ::std::to_address(b), value);
@@ -72,7 +109,7 @@ void uninitialized_fill(Alloc &a, It b, It e, const T &value)
 template <typename InIt, typename OutIt, typename Alloc>
 void uninitialized_move_if_noexcept(Alloc &a, InIt b1, InIt e1, OutIt b2)
 {
-    throw_guard guard(a, b2);
+    construction_guard guard(a, b2);
     for (; b1 != e1; (void)++b1, (void)++b2)
     {
         ::std::allocator_traits<Alloc>::construct(a, ::std::to_address(b2), ::std::move_if_noexcept(*b1));
@@ -83,7 +120,7 @@ void uninitialized_move_if_noexcept(Alloc &a, InIt b1, InIt e1, OutIt b2)
 template <typename It, typename Alloc>
 void uninitialized_default_construct(Alloc &a, It b, It e)
 {
-    throw_guard guard(a, b);
+    construction_guard guard(a, b);
     for (; b != e; (void)++b)
     {
         ::std::allocator_traits<Alloc>::construct(a, ::std::to_address(b));
@@ -117,271 +154,22 @@ void destroy_range(Alloc &a, It b, It e) noexcept
 template <typename T, typename Alloc = ::std::allocator<T>>
 class vector
 {
+    using atraits_t = ::std::allocator_traits<Alloc>;
+
 public:
     using value_type = T;
     using allocator_type = Alloc;
-    using size_type = ::std::size_t;
-    using difference_type = ::std::ptrdiff_t;
+    using size_type = typename atraits_t::size_type;
+    using difference_type = typename atraits_t::difference_type;
     using reference = value_type &;
     using const_reference = const value_type &;
-    using pointer = typename ::std::allocator_traits<Alloc>::pointer;
-    using const_pointer = typename ::std::allocator_traits<Alloc>::const_pointer;
+    using pointer = typename atraits_t::pointer;
+    using const_pointer = typename atraits_t::const_pointer;
     using iterator = pointer;
     using const_iterator = const_pointer;
     using reverse_iterator = ::std::reverse_iterator<iterator>;
     using const_reverse_iterator = ::std::reverse_iterator<const_iterator>;
 
-private:
-    using atraits_t = ::std::allocator_traits<Alloc>;
-
-    class raw_memory
-    {
-        Alloc &a_;
-        pointer data_;
-        size_type cap_;
-        bool flag_ = true;
-
-    public:
-        raw_memory(Alloc &a, size_type cap) : a_(a), data_(a.allocate(cap)), cap_(cap)
-        {
-        }
-
-        ~raw_memory()
-        {
-            if (flag_) [[likely]]
-            {
-                a_.deallocate(data_, cap_);
-            }
-        }
-
-        pointer release() noexcept
-        {
-            flag_ = false;
-            return data_;
-        }
-
-        pointer get() noexcept
-        {
-            return data_;
-        }
-    };
-
-    [[nodiscard]] size_type next_capacity(size_type required)
-    {
-        size_type cap = cap_ < 8 ? 8 : cap_;
-        while (cap < required)
-        {
-            cap += cap / 2;
-        }
-        return cap;
-    }
-
-    [[nodiscard]] size_type index_of(const_iterator pos) const
-    {
-        if (data_ == nullptr)
-        {
-            if (pos != cbegin()) [[unlikely]]
-            {
-                ::std::abort();
-            }
-            return 0;
-        }
-        auto idx = static_cast<size_type>(pos - cbegin());
-        if (idx > size_) [[unlikely]]
-        {
-            ::std::abort();
-        }
-        return idx;
-    }
-
-    iterator insert_impl(size_type pos_i, size_type count, const value_type &value)
-    {
-        if (cap_ < size_ + count)
-        {
-            auto new_cap = next_capacity(size_ + count);
-            raw_memory raw(alloc_, new_cap);
-            auto raw_p = raw.get();
-            vector_detail::uninitialized_fill(alloc_, raw_p + pos_i, raw_p + pos_i + count, value);
-            vector_detail::uninitialized_move_if_noexcept(alloc_, data_, data_ + pos_i, raw_p);
-            vector_detail::uninitialized_move_if_noexcept(alloc_, data_ + pos_i, data_ + size_, raw_p + pos_i + count);
-            destroy_and_deallocate();
-            data_ = raw.release();
-            size_ += count;
-            cap_ = new_cap;
-        }
-        else
-        {
-            auto old_end = data_ + size_;
-            vector_detail::uninitialized_fill(alloc_, old_end, old_end + count, value);
-            size_ += count;
-            ::std::rotate(data_ + pos_i, old_end, data_ + size_);
-        }
-        return data_ + pos_i;
-    }
-
-    template <typename It>
-    iterator insert_impl(size_type pos_i, It b, It e)
-    {
-        auto count = ::std::distance(b, e);
-        if (cap_ < size_ + count)
-        {
-            auto new_cap = next_capacity(size_ + count);
-            raw_memory raw(alloc_, new_cap);
-            auto raw_p = raw.get();
-            vector_detail::uninitialized_copy(alloc_, raw_p + pos_i, raw_p + pos_i + count, b);
-            vector_detail::uninitialized_move_if_noexcept(alloc_, data_, data_ + pos_i, raw_p);
-            vector_detail::uninitialized_move_if_noexcept(alloc_, data_ + pos_i, data_ + size_, raw_p + pos_i + count);
-            destroy_and_deallocate();
-            data_ = raw.release();
-            size_ += count;
-            cap_ = new_cap;
-        }
-        else
-        {
-            auto old_end = data_ + size_;
-            vector_detail::uninitialized_fill(alloc_, old_end, old_end + count, b);
-            size_ += count;
-            ::std::rotate(data_ + pos_i, old_end, data_ + size_);
-        }
-        return data_ + pos_i;
-    }
-
-    template <typename... Args>
-    iterator emplace_impl(size_type pos_i, Args &&...args)
-    {
-        if (cap_ < size_ + 1)
-        {
-            auto new_cap = next_capacity(size_ + 1);
-            raw_memory raw(alloc_, new_cap);
-            auto raw_p = raw.get();
-            vector_detail::construct_at(alloc_, raw_p + pos_i, ::std::forward<Args>(args)...);
-            vector_detail::uninitialized_move_if_noexcept(alloc_, data_, data_ + pos_i, raw_p);
-            vector_detail::uninitialized_move_if_noexcept(alloc_, data_ + pos_i, data_ + size_, raw_p + pos_i + 1);
-            destroy_and_deallocate();
-            data_ = raw.release();
-            ++size_;
-            cap_ = new_cap;
-        }
-        else
-        {
-            auto old_end = data_ + size_;
-            vector_detail::construct_at(alloc_, old_end, ::std::forward<Args>(args)...);
-            ++size_;
-            ::std::rotate(data_ + pos_i, old_end, data_ + size_);
-        }
-        return data_ + pos_i;
-    }
-
-    template <typename... Args>
-    iterator emplace_back_impl(Args &&...args)
-    {
-        if (cap_ < size_ + 1)
-        {
-            auto new_cap = next_capacity(size_ + 1);
-            raw_memory raw(alloc_, new_cap);
-            auto raw_p = raw.get();
-            vector_detail::construct_at(alloc_, raw_p + size_, ::std::forward<Args>(args)...);
-            vector_detail::uninitialized_move_if_noexcept(alloc_, data_, data_ + size_, raw_p);
-            destroy_and_deallocate();
-            data_ = raw.release();
-            ++size_;
-            cap_ = new_cap;
-        }
-        else
-        {
-            vector_detail::construct_at(alloc_, data_ + size_, ::std::forward<Args>(args)...);
-            ++size_;
-        }
-        return end();
-    }
-
-    iterator erase_impl(const_iterator first, const_iterator last)
-    {
-        auto erase_count = last - first;
-
-        auto dst = const_cast<iterator>(first);
-        auto src = dst + erase_count;
-        auto old_end = data_ + size_;
-
-        for (; src != old_end; (void)++dst, (void)++src)
-        {
-            *dst = ::std::move(*src);
-        }
-
-        vector_detail::destroy_range(alloc_, old_end - erase_count, old_end);
-
-        size_ -= erase_count;
-
-        return const_cast<iterator>(first);
-    }
-
-    void destroy_and_deallocate()
-    {
-        if (data_) [[likely]]
-        {
-            vector_detail::destroy_range(alloc_, begin(), end());
-            alloc_.deallocate(data_, cap_);
-        }
-    }
-
-    void reallocate(size_type new_cap)
-    {
-        raw_memory raw(alloc_, new_cap);
-        auto raw_p = raw.get();
-        vector_detail::uninitialized_move_if_noexcept(alloc_, begin(), end(), raw_p);
-
-        destroy_and_deallocate();
-
-        data_ = raw.release();
-        cap_ = new_cap;
-    }
-
-    void truncate_to(size_type new_size) noexcept
-    {
-        vector_detail::destroy_range(alloc_, data_ + new_size, data_ + size_);
-        size_ = new_size;
-    }
-
-    void append_default_n(size_type count)
-    {
-        reserve(size_ + count);
-        vector_detail::uninitialized_fill(alloc_, data_ + size_, data_ + size_ + count);
-        size_ += count;
-    }
-
-    void append_fill_n(size_type count, const value_type &value)
-    {
-        reserve(size_ + count);
-        vector_detail::uninitialized_fill(alloc_, data_ + size_, data_ + size_ + count, value);
-        size_ += count;
-    }
-
-    template <typename InIt>
-    void overwrite(InIt first, InIt last, size_type count)
-    {
-        for (size_type i = 0; i != count; ++i, (void)++first)
-        {
-            data_[i] = *first;
-        }
-    }
-
-    void overwrite_fill(size_type count, const value_type &value)
-    {
-        for (size_type i = 0; i != count; ++i)
-        {
-            data_[i] = value;
-        }
-    }
-
-    pointer data_{};
-
-    size_type size_{};
-
-    size_type cap_{};
-
-    [[no_unique_address]] Alloc alloc_{};
-
-public:
     explicit vector(const Alloc &alloc) noexcept : alloc_(alloc)
     {
     }
@@ -393,10 +181,20 @@ public:
     template <class InputIt>
     vector(InputIt first, InputIt last, const Alloc &alloc = Alloc()) : alloc_(alloc)
     {
-        auto count = last - first;
-        reserve(count);
-        vector_detail::uninitialized_copy(alloc_, first, last, data_, data_ + count);
-        size_ = count;
+        if constexpr (::std::forward_iterator<InputIt>)
+        {
+            auto count = ::std::distance(first, last);
+            reserve(count);
+            vector_detail::uninitialized_copy(alloc_, first, last, data_, data_ + count);
+            size_ = count;
+        }
+        else
+        {
+            for (; first != last; (void)++first)
+            {
+                emplace_back(*first);
+            }
+        }
     }
 
     vector(::std::initializer_list<value_type> init, const Alloc &alloc = Alloc())
@@ -436,9 +234,10 @@ public:
     {
         reserve(count);
 
-        auto overwrite_n = (count < size_) ? count : size_;
-        overwrite_fill(overwrite_n, value);
-
+        for (size_type i = 0; i != (count < size_) ? count : size_; ++i)
+        {
+            data_[i] = value;
+        }
         if (count < size_)
         {
             vector_detail::destroy_range(alloc_, data_ + count, data_ + size_);
@@ -456,8 +255,10 @@ public:
         auto count = last - first;
         reserve(count);
 
-        auto overwrite_n = (count < size_) ? count : size_;
-        overwrite(first, last, overwrite_n);
+        for (size_type i = 0; i != (count < size_) ? count : size_; ++i, (void)++first)
+        {
+            data_[i] = *first;
+        }
 
         if (count < size_)
         {
@@ -842,6 +643,205 @@ public:
             swap(alloc_, other.alloc_);
         }
     }
+
+private:
+    [[nodiscard]] size_type next_capacity(size_type required)
+    {
+        size_type cap = cap_ < 8 ? 8 : cap_;
+        while (cap < required)
+        {
+            cap += cap / 2;
+        }
+        return cap;
+    }
+
+    [[nodiscard]] size_type index_of(const_iterator pos) const
+    {
+        if (data_ == nullptr)
+        {
+            if (pos != cbegin()) [[unlikely]]
+            {
+                ::std::abort();
+            }
+            return 0;
+        }
+        auto idx = static_cast<size_type>(pos - cbegin());
+        if (idx > size_) [[unlikely]]
+        {
+            ::std::abort();
+        }
+        return idx;
+    }
+
+    iterator insert_impl(size_type pos_i, size_type count, const value_type &value)
+    {
+        if (cap_ < size_ + count)
+        {
+            auto new_cap = next_capacity(size_ + count);
+            vector_detail::raw_memory raw(alloc_, new_cap);
+            auto raw_p = raw.get();
+            vector_detail::uninitialized_fill(alloc_, raw_p + pos_i, raw_p + pos_i + count, value);
+            vector_detail::uninitialized_move_if_noexcept(alloc_, data_, data_ + pos_i, raw_p);
+            vector_detail::uninitialized_move_if_noexcept(alloc_, data_ + pos_i, data_ + size_, raw_p + pos_i + count);
+            destroy_and_deallocate();
+            data_ = raw.release();
+            size_ += count;
+            cap_ = new_cap;
+        }
+        else
+        {
+            auto old_end = data_ + size_;
+            vector_detail::uninitialized_fill(alloc_, old_end, old_end + count, value);
+            size_ += count;
+            ::std::rotate(data_ + pos_i, old_end, data_ + size_);
+        }
+        return data_ + pos_i;
+    }
+
+    template <typename It>
+    iterator insert_impl(size_type pos_i, It b, It e)
+    {
+        auto count = ::std::distance(b, e);
+        if (cap_ < size_ + count)
+        {
+            auto new_cap = next_capacity(size_ + count);
+            vector_detail::raw_memory raw(alloc_, new_cap);
+            auto raw_p = raw.get();
+            vector_detail::uninitialized_copy(alloc_, raw_p + pos_i, raw_p + pos_i + count, b);
+            vector_detail::uninitialized_move_if_noexcept(alloc_, data_, data_ + pos_i, raw_p);
+            vector_detail::uninitialized_move_if_noexcept(alloc_, data_ + pos_i, data_ + size_, raw_p + pos_i + count);
+            destroy_and_deallocate();
+            data_ = raw.release();
+            size_ += count;
+            cap_ = new_cap;
+        }
+        else
+        {
+            auto old_end = data_ + size_;
+            vector_detail::uninitialized_fill(alloc_, old_end, old_end + count, b);
+            size_ += count;
+            ::std::rotate(data_ + pos_i, old_end, data_ + size_);
+        }
+        return data_ + pos_i;
+    }
+
+    template <typename... Args>
+    iterator emplace_impl(size_type pos_i, Args &&...args)
+    {
+        if (cap_ < size_ + 1)
+        {
+            auto new_cap = next_capacity(size_ + 1);
+            vector_detail::raw_memory raw(alloc_, new_cap);
+            auto raw_p = raw.get();
+            vector_detail::construct_at(alloc_, raw_p + pos_i, ::std::forward<Args>(args)...);
+            vector_detail::uninitialized_move_if_noexcept(alloc_, data_, data_ + pos_i, raw_p);
+            vector_detail::uninitialized_move_if_noexcept(alloc_, data_ + pos_i, data_ + size_, raw_p + pos_i + 1);
+            destroy_and_deallocate();
+            data_ = raw.release();
+            ++size_;
+            cap_ = new_cap;
+        }
+        else
+        {
+            auto old_end = data_ + size_;
+            vector_detail::construct_at(alloc_, old_end, ::std::forward<Args>(args)...);
+            ++size_;
+            ::std::rotate(data_ + pos_i, old_end, data_ + size_);
+        }
+        return data_ + pos_i;
+    }
+
+    template <typename... Args>
+    iterator emplace_back_impl(Args &&...args)
+    {
+        if (cap_ < size_ + 1)
+        {
+            auto new_cap = next_capacity(size_ + 1);
+            vector_detail::raw_memory raw(alloc_, new_cap);
+            auto raw_p = raw.get();
+            vector_detail::construct_at(alloc_, raw_p + size_, ::std::forward<Args>(args)...);
+            vector_detail::uninitialized_move_if_noexcept(alloc_, data_, data_ + size_, raw_p);
+            destroy_and_deallocate();
+            data_ = raw.release();
+            ++size_;
+            cap_ = new_cap;
+        }
+        else
+        {
+            vector_detail::construct_at(alloc_, data_ + size_, ::std::forward<Args>(args)...);
+            ++size_;
+        }
+        return end();
+    }
+
+    iterator erase_impl(const_iterator first, const_iterator last)
+    {
+        auto erase_count = last - first;
+
+        auto dst = const_cast<iterator>(first);
+        auto src = dst + erase_count;
+        auto old_end = data_ + size_;
+
+        for (; src != old_end; (void)++dst, (void)++src)
+        {
+            *dst = ::std::move(*src);
+        }
+
+        vector_detail::destroy_range(alloc_, old_end - erase_count, old_end);
+
+        size_ -= erase_count;
+
+        return const_cast<iterator>(first);
+    }
+
+    void destroy_and_deallocate()
+    {
+        if (data_) [[likely]]
+        {
+            vector_detail::destroy_range(alloc_, begin(), end());
+            alloc_.deallocate(data_, cap_);
+        }
+    }
+
+    void reallocate(size_type new_cap)
+    {
+        vector_detail::raw_memory raw(alloc_, new_cap);
+        auto raw_p = raw.get();
+        vector_detail::uninitialized_move_if_noexcept(alloc_, begin(), end(), raw_p);
+
+        destroy_and_deallocate();
+
+        data_ = raw.release();
+        cap_ = new_cap;
+    }
+
+    void truncate_to(size_type new_size) noexcept
+    {
+        vector_detail::destroy_range(alloc_, data_ + new_size, data_ + size_);
+        size_ = new_size;
+    }
+
+    void append_default_n(size_type count)
+    {
+        reserve(size_ + count);
+        vector_detail::uninitialized_fill(alloc_, data_ + size_, data_ + size_ + count);
+        size_ += count;
+    }
+
+    void append_fill_n(size_type count, const value_type &value)
+    {
+        reserve(size_ + count);
+        vector_detail::uninitialized_fill(alloc_, data_ + size_, data_ + size_ + count, value);
+        size_ += count;
+    }
+
+    pointer data_{};
+
+    size_type size_{};
+
+    size_type cap_{};
+
+    [[no_unique_address]] Alloc alloc_{};
 };
 
 template <typename T, typename Alloc>
