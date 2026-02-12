@@ -17,16 +17,16 @@ namespace cxx20
 {
 namespace vector_detail
 {
-template <typename T, typename Alloc>
+template <typename It, typename Alloc>
 class throw_guard
 {
     Alloc &a_;
-    T first_;
-    T &cur_;
+    It start_;
+    It &cur_;
     bool flag_ = true;
 
 public:
-    throw_guard(Alloc &a, T &res) noexcept : a_(a), first_(res), cur_(res)
+    throw_guard(Alloc &a, It &cur) noexcept : a_(a), start_(cur), cur_(cur)
     {
     }
 
@@ -34,9 +34,9 @@ public:
     {
         if (flag_) [[unlikely]]
         {
-            for (; first_ != cur_; ++first_)
+            for (; start_ != cur_; (void)++start_)
             {
-                ::std::allocator_traits<Alloc>::destroy(a_, ::std::to_address(first_));
+                ::std::allocator_traits<Alloc>::destroy(a_, ::std::to_address(start_));
             }
         }
     }
@@ -48,10 +48,10 @@ public:
 };
 
 template <typename InIt, typename OutIt, typename Alloc>
-void copy(Alloc &a, InIt b1, InIt e1, OutIt b2, OutIt e2)
+void uninitialized_copy(Alloc &a, InIt b1, InIt e1, OutIt b2)
 {
     throw_guard guard(a, b2);
-    for (; b1 != e1 && b2 != e2; (void)++b1, (void)++b2)
+    for (; b1 != e1; (void)++b1, (void)++b2)
     {
         ::std::allocator_traits<Alloc>::construct(a, ::std::to_address(b2), *b1);
     }
@@ -59,7 +59,7 @@ void copy(Alloc &a, InIt b1, InIt e1, OutIt b2, OutIt e2)
 }
 
 template <typename It, typename T, typename Alloc>
-void fill(Alloc &a, It b, It e, const T &value)
+void uninitialized_fill(Alloc &a, It b, It e, const T &value)
 {
     throw_guard guard(a, b);
     for (; b != e; (void)++b)
@@ -70,10 +70,10 @@ void fill(Alloc &a, It b, It e, const T &value)
 }
 
 template <typename InIt, typename OutIt, typename Alloc>
-void move_if_noexcept(Alloc &a, InIt b1, InIt e1, OutIt b2, OutIt e2)
+void uninitialized_move_if_noexcept(Alloc &a, InIt b1, InIt e1, OutIt b2)
 {
     throw_guard guard(a, b2);
-    for (; b1 != e1 && b2 != e2; (void)++b1, ((void)++b2))
+    for (; b1 != e1; (void)++b1, (void)++b2)
     {
         ::std::allocator_traits<Alloc>::construct(a, ::std::to_address(b2), ::std::move_if_noexcept(*b1));
     }
@@ -81,7 +81,7 @@ void move_if_noexcept(Alloc &a, InIt b1, InIt e1, OutIt b2, OutIt e2)
 }
 
 template <typename It, typename Alloc>
-void fill(Alloc &a, It b, It e)
+void uninitialized_default_construct(Alloc &a, It b, It e)
 {
     throw_guard guard(a, b);
     for (; b != e; (void)++b)
@@ -92,21 +92,21 @@ void fill(Alloc &a, It b, It e)
 }
 
 template <typename It, typename... Args, typename Alloc>
-void construct_at(Alloc &a, It pos, Args... args)
+void construct_at(Alloc &a, It pos, Args &&...args)
 {
     ::std::allocator_traits<Alloc>::construct(a, ::std::to_address(pos), ::std::forward<Args>(args)...);
 }
 
 template <typename It, typename Alloc>
-void destroy_at(Alloc &a, It pos)
+void destroy_at(Alloc &a, It pos) noexcept
 {
     ::std::allocator_traits<Alloc>::destroy(a, ::std::to_address(pos));
 }
 
 template <typename It, typename Alloc>
-void destroy(Alloc &a, It b, It e) noexcept
+void destroy_range(Alloc &a, It b, It e) noexcept
 {
-    for (; b != e; ++b)
+    for (; b != e; (void)++b)
     {
         ::std::allocator_traits<Alloc>::destroy(a, ::std::to_address(b));
     }
@@ -132,7 +132,9 @@ public:
     using const_reverse_iterator = ::std::reverse_iterator<const_iterator>;
 
 private:
-    class alloc_guard
+    using atraits_t = ::std::allocator_traits<Alloc>;
+
+    class raw_memory
     {
         Alloc &a_;
         pointer data_;
@@ -140,23 +142,236 @@ private:
         bool flag_ = true;
 
     public:
-        alloc_guard(Alloc &a, pointer data, size_type cap) noexcept : a_(a), data_(data), cap_(cap)
+        raw_memory(Alloc &a, size_type cap) : a_(a), data_(a.allocate(cap)), cap_(cap)
         {
         }
 
-        void release() noexcept
-        {
-            flag_ = false;
-        }
-
-        ~alloc_guard()
+        ~raw_memory()
         {
             if (flag_) [[likely]]
             {
                 a_.deallocate(data_, cap_);
             }
         }
+
+        pointer release() noexcept
+        {
+            flag_ = false;
+            return data_;
+        }
+
+        pointer get() noexcept
+        {
+            return data_;
+        }
     };
+
+    [[nodiscard]] size_type next_capacity(size_type required)
+    {
+        size_type cap = cap_ < 8 ? 8 : cap_;
+        while (cap < required)
+        {
+            cap += cap / 2;
+        }
+        return cap;
+    }
+
+    [[nodiscard]] size_type index_of(const_iterator pos) const
+    {
+        if (data_ == nullptr)
+        {
+            if (pos != cbegin()) [[unlikely]]
+            {
+                ::std::abort();
+            }
+            return 0;
+        }
+        auto idx = static_cast<size_type>(pos - cbegin());
+        if (idx > size_) [[unlikely]]
+        {
+            ::std::abort();
+        }
+        return idx;
+    }
+
+    iterator insert_impl(size_type pos_i, size_type count, const value_type &value)
+    {
+        if (cap_ < size_ + count)
+        {
+            auto new_cap = next_capacity(size_ + count);
+            raw_memory raw(alloc_, new_cap);
+            auto raw_p = raw.get();
+            vector_detail::uninitialized_fill(alloc_, raw_p + pos_i, raw_p + pos_i + count, value);
+            vector_detail::uninitialized_move_if_noexcept(alloc_, data_, data_ + pos_i, raw_p);
+            vector_detail::uninitialized_move_if_noexcept(alloc_, data_ + pos_i, data_ + size_, raw_p + pos_i + count);
+            destroy_and_deallocate();
+            data_ = raw.release();
+            size_ += count;
+            cap_ = new_cap;
+        }
+        else
+        {
+            auto old_end = data_ + size_;
+            vector_detail::uninitialized_fill(alloc_, old_end, old_end + count, value);
+            size_ += count;
+            ::std::rotate(data_ + pos_i, old_end, data_ + size_);
+        }
+        return data_ + pos_i;
+    }
+
+    template <typename It>
+    iterator insert_impl(size_type pos_i, It b, It e)
+    {
+        auto count = ::std::distance(b, e);
+        if (cap_ < size_ + count)
+        {
+            auto new_cap = next_capacity(size_ + count);
+            raw_memory raw(alloc_, new_cap);
+            auto raw_p = raw.get();
+            vector_detail::uninitialized_copy(alloc_, raw_p + pos_i, raw_p + pos_i + count, b);
+            vector_detail::uninitialized_move_if_noexcept(alloc_, data_, data_ + pos_i, raw_p);
+            vector_detail::uninitialized_move_if_noexcept(alloc_, data_ + pos_i, data_ + size_, raw_p + pos_i + count);
+            destroy_and_deallocate();
+            data_ = raw.release();
+            size_ += count;
+            cap_ = new_cap;
+        }
+        else
+        {
+            auto old_end = data_ + size_;
+            vector_detail::uninitialized_fill(alloc_, old_end, old_end + count, b);
+            size_ += count;
+            ::std::rotate(data_ + pos_i, old_end, data_ + size_);
+        }
+        return data_ + pos_i;
+    }
+
+    template <typename... Args>
+    iterator emplace_impl(size_type pos_i, Args &&...args)
+    {
+        if (cap_ < size_ + 1)
+        {
+            auto new_cap = next_capacity(size_ + 1);
+            raw_memory raw(alloc_, new_cap);
+            auto raw_p = raw.get();
+            vector_detail::construct_at(alloc_, raw_p + pos_i, ::std::forward<Args>(args)...);
+            vector_detail::uninitialized_move_if_noexcept(alloc_, data_, data_ + pos_i, raw_p);
+            vector_detail::uninitialized_move_if_noexcept(alloc_, data_ + pos_i, data_ + size_, raw_p + pos_i + 1);
+            destroy_and_deallocate();
+            data_ = raw.release();
+            ++size_;
+            cap_ = new_cap;
+        }
+        else
+        {
+            auto old_end = data_ + size_;
+            vector_detail::construct_at(alloc_, old_end, ::std::forward<Args>(args)...);
+            ++size_;
+            ::std::rotate(data_ + pos_i, old_end, data_ + size_);
+        }
+        return data_ + pos_i;
+    }
+
+    template <typename... Args>
+    iterator emplace_back_impl(Args &&...args)
+    {
+        if (cap_ < size_ + 1)
+        {
+            auto new_cap = next_capacity(size_ + 1);
+            raw_memory raw(alloc_, new_cap);
+            auto raw_p = raw.get();
+            vector_detail::construct_at(alloc_, raw_p + size_, ::std::forward<Args>(args)...);
+            vector_detail::uninitialized_move_if_noexcept(alloc_, data_, data_ + size_, raw_p);
+            destroy_and_deallocate();
+            data_ = raw.release();
+            ++size_;
+            cap_ = new_cap;
+        }
+        else
+        {
+            vector_detail::construct_at(alloc_, data_ + size_, ::std::forward<Args>(args)...);
+            ++size_;
+        }
+        return end();
+    }
+
+    iterator erase_impl(const_iterator first, const_iterator last)
+    {
+        auto erase_count = last - first;
+
+        auto dst = const_cast<iterator>(first);
+        auto src = dst + erase_count;
+        auto old_end = data_ + size_;
+
+        for (; src != old_end; (void)++dst, (void)++src)
+        {
+            *dst = ::std::move(*src);
+        }
+
+        vector_detail::destroy_range(alloc_, old_end - erase_count, old_end);
+
+        size_ -= erase_count;
+
+        return const_cast<iterator>(first);
+    }
+
+    void destroy_and_deallocate()
+    {
+        if (data_) [[likely]]
+        {
+            vector_detail::destroy_range(alloc_, begin(), end());
+            alloc_.deallocate(data_, cap_);
+        }
+    }
+
+    void reallocate(size_type new_cap)
+    {
+        raw_memory raw(alloc_, new_cap);
+        auto raw_p = raw.get();
+        vector_detail::uninitialized_move_if_noexcept(alloc_, begin(), end(), raw_p);
+
+        destroy_and_deallocate();
+
+        data_ = raw.release();
+        cap_ = new_cap;
+    }
+
+    void truncate_to(size_type new_size) noexcept
+    {
+        vector_detail::destroy_range(alloc_, data_ + new_size, data_ + size_);
+        size_ = new_size;
+    }
+
+    void append_default_n(size_type count)
+    {
+        reserve(size_ + count);
+        vector_detail::uninitialized_fill(alloc_, data_ + size_, data_ + size_ + count);
+        size_ += count;
+    }
+
+    void append_fill_n(size_type count, const value_type &value)
+    {
+        reserve(size_ + count);
+        vector_detail::uninitialized_fill(alloc_, data_ + size_, data_ + size_ + count, value);
+        size_ += count;
+    }
+
+    template <typename InIt>
+    void overwrite(InIt first, InIt last, size_type count)
+    {
+        for (size_type i = 0; i != count; ++i, (void)++first)
+        {
+            data_[i] = *first;
+        }
+    }
+
+    void overwrite_fill(size_type count, const value_type &value)
+    {
+        for (size_type i = 0; i != count; ++i)
+        {
+            data_[i] = value;
+        }
+    }
 
     pointer data_{};
 
@@ -164,7 +379,7 @@ private:
 
     size_type cap_{};
 
-    [[no_unique_address]] Alloc alloc_;
+    [[no_unique_address]] Alloc alloc_{};
 
 public:
     explicit vector(const Alloc &alloc) noexcept : alloc_(alloc)
@@ -175,14 +390,21 @@ public:
     {
     }
 
-    vector(::std::initializer_list<value_type> init, const Alloc &alloc = Alloc())
+    template <class InputIt>
+    vector(InputIt first, InputIt last, const Alloc &alloc = Alloc()) : alloc_(alloc)
     {
-        reserve(init.size());
-        vector_detail::copy(alloc_, init.begin(), init.end(), data_, data_ + init.size());
-        size_ = init.size();
+        auto count = last - first;
+        reserve(count);
+        vector_detail::uninitialized_copy(alloc_, first, last, data_, data_ + count);
+        size_ = count;
     }
 
-    vector(const vector &other)
+    vector(::std::initializer_list<value_type> init, const Alloc &alloc = Alloc())
+        : vector(init.begin(), init.end(), alloc)
+    {
+    }
+
+    vector(const vector &other) : alloc_(atraits_t::select_on_container_copy_construction(other.alloc_))
     {
         assign(other.cbegin(), other.cend());
     }
@@ -197,7 +419,7 @@ public:
         : alloc_(alloc)
     {
         reserve(count);
-        vector_detail::fill(alloc_, data_, data_ + count, value);
+        vector_detail::uninitialized_fill(alloc_, data_, data_ + count, value);
         size_ = count;
     }
 
@@ -210,56 +432,20 @@ public:
         }
     }
 
-    vector &operator=(const vector &other)
-    {
-        if (::std::addressof(other) != this) [[likely]]
-        {
-            assign(other.cbegin(), other.cend());
-        }
-        return *this;
-    }
-
-    vector &operator=(vector &&other)
-    {
-        if (::std::addressof(other) != this) [[likely]]
-        {
-            clear();
-            if (data_) [[likely]]
-            {
-                alloc_.deallocate(data_, cap_);
-            }
-
-            data_ = ::std::exchange(other.data_, nullptr);
-            size_ = ::std::exchange(other.size_, 0);
-            cap_ = ::std::exchange(other.cap_, 0);
-            alloc_ = ::std::move(other.alloc_);
-        }
-        return *this;
-    }
-
-    vector &operator=(::std::initializer_list<value_type> list)
-    {
-        assign(list.cbegin(), list.cend());
-        return *this;
-    }
-
     void assign(size_type count, const T &value)
     {
         reserve(count);
-        size_type i = 0;
-        for (; i != size_; ++i)
-        {
-            data_[i] = value;
-        }
+
+        auto overwrite_n = (count < size_) ? count : size_;
+        overwrite_fill(overwrite_n, value);
 
         if (count < size_)
         {
-            vector_detail::destroy(alloc_, data_ + count, data_ + size_);
+            vector_detail::destroy_range(alloc_, data_ + count, data_ + size_);
         }
-
         if (count > size_)
         {
-            vector_detail::fill(alloc_, data_ + i, data_ + count, value);
+            vector_detail::uninitialized_fill(alloc_, data_ + size_, data_ + size_ + count, value);
         }
         size_ = count;
     }
@@ -267,24 +453,21 @@ public:
     template <typename InputIt>
     void assign(InputIt first, InputIt last)
     {
-        size_type diff = last - first;
-        reserve(diff);
-        size_type i = 0;
-        for (; i != size_; ++i, ++first)
-        {
-            data_[i] = first;
-        }
+        auto count = last - first;
+        reserve(count);
 
-        if (diff < size_)
-        {
-            vector_detail::destroy(alloc_, data_ + diff, data_ + size_);
-        }
+        auto overwrite_n = (count < size_) ? count : size_;
+        overwrite(first, last, overwrite_n);
 
-        if (diff > size_)
+        if (count < size_)
         {
-            vector_detail::copy(alloc_, data_ + i, data_ + diff, first, last);
+            vector_detail::destroy_range(alloc_, data_ + count, data_ + size_);
         }
-        size_ = diff;
+        if (count > size_)
+        {
+            vector_detail::uninitialized_copy(alloc_, first, last, data_ + size_, data_ + size_ + count);
+        }
+        size_ = count;
     }
 
     void assign(::std::initializer_list<T> list)
@@ -292,9 +475,53 @@ public:
         assign(list.cbegin(), list.cend());
     }
 
-    [[nodiscard]] allocator_type get_allocator() const noexcept
+    vector &operator=(const vector &other)
     {
-        return alloc_;
+        if (::std::addressof(other) == this) [[unlikely]]
+        {
+            return *this;
+        }
+
+        if constexpr (atraits_t::propagate_on_container_copy_assignment::value)
+        {
+            destroy_and_deallocate();
+            data_ = nullptr;
+            size_ = 0;
+            cap_ = 0;
+            alloc_ = other.alloc_;
+        }
+        assign(other.cbegin(), other.cend());
+
+        return *this;
+    }
+
+    vector &operator=(vector &&other)
+    {
+        if (::std::addressof(other) == this) [[unlikely]]
+        {
+            return *this;
+        }
+
+        if constexpr (atraits_t::propagate_on_container_move_assignment::value)
+        {
+            destroy_and_deallocate();
+            data_ = ::std::exchange(other.data_, nullptr);
+            size_ = ::std::exchange(other.size_, 0);
+            cap_ = ::std::exchange(other.cap_, 0);
+            alloc_ = ::std::move(other.alloc_);
+        }
+        else
+        {
+            assign(::std::make_move_iterator(other.begin()), ::std::make_move_iterator(other.end()));
+        }
+
+        return *this;
+    }
+
+    vector &operator=(::std::initializer_list<value_type> list)
+    {
+        assign(list.cbegin(), list.cend());
+        return *this;
     }
 
     [[nodiscard]] reference operator[](size_type pos)
@@ -471,6 +698,11 @@ public:
         return cap_;
     }
 
+    [[nodiscard]] allocator_type get_allocator() const noexcept
+    {
+        return alloc_;
+    }
+
     void reserve(size_type required_cap)
     {
         if (required_cap <= cap_) [[unlikely]]
@@ -478,24 +710,7 @@ public:
             return;
         }
 
-        size_type grown_cap = cap_ < 8 ? 8 : cap_;
-        while (grown_cap < required_cap)
-        {
-            grown_cap += grown_cap / 2;
-        }
-
-        pointer new_data = alloc_.allocate(grown_cap);
-        alloc_guard guard(alloc_, new_data, grown_cap);
-
-        vector_detail::move_if_noexcept(alloc_, begin(), end(), new_data, new_data + size_);
-        vector_detail::destroy(alloc_, begin(), end());
-
-        alloc_.deallocate(data_, cap_);
-
-        data_ = new_data;
-        cap_ = grown_cap;
-
-        guard.release();
+        reallocate(required_cap);
     }
 
     void shrink_to_fit()
@@ -505,124 +720,80 @@ public:
             return;
         }
 
-        pointer new_data = alloc_.allocate(size_);
-        alloc_guard guard(alloc_, new_data, size_);
+        if (size_ == 0) [[unlikely]]
+        {
+            destroy_and_deallocate();
+            data_ = nullptr;
+            cap_ = 0;
+            return;
+        }
 
-        vector_detail::move_if_noexcept(alloc_, begin(), end(), new_data, new_data + size_);
-
-        vector_detail::destroy(alloc_, begin(), end());
-
-        alloc_.deallocate(data_, cap_);
-
-        data_ = new_data;
-        cap_ = size_;
-
-        guard.release();
+        reallocate(size_);
     }
 
     void clear() noexcept
     {
-        vector_detail::destroy(alloc_, begin(), end());
+        vector_detail::destroy_range(alloc_, begin(), end());
         size_ = 0;
     }
 
     iterator insert(const_iterator pos, const value_type &value)
     {
-        return emplace(pos, value);
+        return emplace_impl(index_of(pos), value);
     }
 
     iterator insert(const_iterator pos, T &&value)
     {
-        return emplace(pos, ::std::move(value));
+        return emplace_impl(index_of(pos), ::std::move(value));
     }
 
     iterator insert(const_iterator pos, size_type count, const T &value)
     {
-        size_type pos_i = pos - cbegin();
-        reserve(size_ + count);
-        for (size_type i = size_ + count - 1; i != pos_i; --i)
-        {
-            vector_detail::construct_at(alloc_, data_ + i, ::std::move(data_[i - count]));
-            vector_detail::destroy_at(alloc_, data_ + i - count - 1);
-        }
-        vector_detail::fill(alloc_, data_ + pos_i, data_ + pos_i + count, value);
-        size_ += count;
-        return {data_ + pos_i};
+        return insert_impl(index_of(pos), count, value);
     }
 
     template <typename InputIt>
     iterator insert(const_iterator pos, InputIt first, InputIt last)
     {
-        size_type pos_i = pos - cbegin();
-        size_type diff = last - first;
-        reserve(size_ + diff);
-        for (size_type i = size_ + diff - 1; i != pos_i; --i)
-        {
-            vector_detail::construct_at(alloc_, data_ + i, ::std::move(data_[i - diff]));
-            vector_detail::destroy_at(alloc_, data_ + i - diff - 1);
-        }
-        vector_detail::copy(alloc_, data_ + pos_i, data_ + pos_i + diff, first, last);
-        size_ += diff;
-        return {data_ + pos_i};
+
+        return insert_impl(index_of(pos), first, last);
     }
 
     iterator insert(const_iterator pos, ::std::initializer_list<T> list)
     {
-        return insert(pos, list.cbegin(), list.cend());
+        return insert_impl(index_of(pos), list.begin(), list.end());
     }
 
     template <typename... Args>
     iterator emplace(const_iterator pos, Args &&...args)
     {
-        size_type pos_i = pos - cbegin();
-        reserve(size_ + 1);
-        for (size_type i = size_; i != pos_i; --i)
-        {
-            vector_detail::construct_at(alloc_, data_ + i, ::std::move(data_[i - 1]));
-            vector_detail::destroy_at(alloc_, data_ + i - 1);
-        }
-        vector_detail::construct_at(alloc_, data_ + pos_i, ::std::forward<Args>(args)...);
-        ++size_;
-        return {data_ + pos_i};
+        return emplace_impl(index_of(pos), ::std::forward<Args>(args)...);
     }
 
     iterator erase(const_iterator pos)
     {
-        return erase(pos, pos + 1);
+        return erase_impl(pos, pos + 1);
     }
 
     iterator erase(const_iterator first, const_iterator last)
     {
-        size_type diff = last - first;
-        for (size_type i = last - cbegin(); i != size_; ++i)
-        {
-            data_[i - diff] = ::std::move(data_[i]);
-        }
-        for (size_type i = size_ - diff; i != size_; ++i)
-        {
-            vector_detail::destroy_at(alloc_, data_ + i);
-        }
-        size_ -= diff;
-        return const_cast<iterator>(first);
+        return erase_impl(first, last);
     }
 
     void push_back(const T &value)
     {
-        emplace_back(value);
+        (void)emplace_back_impl(value);
     }
 
     void push_back(T &&value)
     {
-        emplace_back(::std::move(value));
+        (void)emplace_back_impl(::std::move(value));
     }
 
     template <typename... Args>
     reference emplace_back(Args &&...args)
     {
-        reserve(size_ + 1);
-        vector_detail::construct_at(alloc_, data_ + size_, ::std::forward<Args>(args)...);
-        ++size_;
-        return back();
+        return *emplace_back_impl(::std::forward<Args>(args)...);
     }
 
     void pop_back()
@@ -637,30 +808,26 @@ public:
 
     void resize(size_type new_size)
     {
-        if (new_size > size_)
-        {
-            reserve(new_size);
-            vector_detail::fill(alloc_, data_ + size_, data_ + new_size);
-        }
         if (new_size < size_)
         {
-            vector_detail::destroy(alloc_, data_ + new_size, data_ + size_);
+            truncate_to(new_size);
         }
-        size_ = new_size;
+        if (new_size > size_)
+        {
+            append_default_n(new_size - size_);
+        }
     }
 
     void resize(size_type new_size, const value_type &value)
     {
-        if (new_size > size_)
-        {
-            reserve(new_size);
-            vector_detail::fill(alloc_, data_ + size_, data_ + new_size, value);
-        }
         if (new_size < size_)
         {
-            vector_detail::destroy(alloc_, data_ + new_size, data_ + size_);
+            truncate_to(new_size);
         }
-        size_ = new_size;
+        if (new_size > size_)
+        {
+            append_fill_n(new_size - size_, value);
+        }
     }
 
     void swap(vector &other) noexcept(noexcept(::std::is_nothrow_swappable_v<pointer> &&
@@ -670,7 +837,10 @@ public:
         swap(data_, other.data_);
         swap(size_, other.size_);
         swap(cap_, other.cap_);
-        swap(alloc_, other.alloc_);
+        if constexpr (atraits_t::propagate_on_container_swap::value)
+        {
+            swap(alloc_, other.alloc_);
+        }
     }
 };
 
@@ -702,7 +872,7 @@ bool operator==(const vector<T, Alloc> &lhs, const vector<T, Alloc> &rhs)
 template <class T, class Alloc>
 constexpr auto operator<=>(const vector<T, Alloc> &lhs, const vector<T, Alloc> &rhs)
 {
-    decltype(lhs.size()) min_size = (lhs.size() < rhs.size()) ? lhs.size() : rhs.size();
+    auto min_size = (lhs.size() < rhs.size()) ? lhs.size() : rhs.size();
     for (decltype(lhs.size()) i = 0; i != min_size; ++i)
     {
         auto cmp = lhs[i] <=> rhs[i];
@@ -718,20 +888,16 @@ template <typename T, typename Alloc, typename U = T>
 constexpr typename vector<T, Alloc>::size_type erase(vector<T, Alloc> &c, const U &value)
 {
     auto old_size = c.size();
-
     auto first = c.begin();
     auto last = c.end();
-
     first = ::std::find(first, last, value);
-
     if (first == last)
     {
         return 0;
     }
-
     auto dest = first;
     ++first;
-    for (; first != last; ++first)
+    for (; first != last; (void)++first)
     {
         if (*first != value)
         {
@@ -739,7 +905,6 @@ constexpr typename vector<T, Alloc>::size_type erase(vector<T, Alloc> &c, const 
             ++dest;
         }
     }
-
     c.erase(dest, last);
     return old_size - c.size();
 }
@@ -748,20 +913,16 @@ template <typename T, typename Alloc, typename Pred>
 constexpr typename vector<T, Alloc>::size_type erase_if(vector<T, Alloc> &c, Pred pred)
 {
     auto old_size = c.size();
-
     auto first = c.begin();
     auto last = c.end();
-
     first = ::std::find_if(first, last, pred);
-
     if (first == last)
     {
         return 0;
     }
-
     auto dest = first;
     ++first;
-    for (; first != last; ++first)
+    for (; first != last; (void)++first)
     {
         if (!pred(*first))
         {
@@ -769,7 +930,6 @@ constexpr typename vector<T, Alloc>::size_type erase_if(vector<T, Alloc> &c, Pre
             ++dest;
         }
     }
-
     c.erase(dest, last);
     return old_size - c.size();
 }
