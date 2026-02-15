@@ -1,6 +1,8 @@
 #pragma once
 
-#include <cstddef>
+#include "helper.hpp"
+#include <cassert>
+#include <compare>
 #include <iterator>
 
 namespace evqovv
@@ -25,154 +27,144 @@ struct array
     using reverse_iterator = ::std::reverse_iterator<iterator>;
     using const_reverse_iterator = ::std::reverse_iterator<const_iterator>;
 
-    constexpr reference at(size_type pos)
-    {
-        if (pos >= N) [[unlikely]]
-        {
-            ::std::abort();
-        }
-
-        return eles_[pos];
-    }
-
-    constexpr const_reference at(size_type pos) const
-    {
-        if (pos >= N) [[unlikely]]
-        {
-            ::std::abort();
-        }
-
-        return eles_[pos];
-    }
-
     constexpr reference operator[](size_type pos)
     {
         if (pos >= N) [[unlikely]]
         {
-            ::std::abort();
+            terminate();
         }
 
         return eles_[pos];
     }
 
-    constexpr const_reference operator[](size_type pos) const
+    [[nodiscard]] constexpr const_reference operator[](size_type pos) const
     {
         if (pos >= N) [[unlikely]]
         {
-            ::std::abort();
+            terminate();
         }
 
         return eles_[pos];
     }
 
-    reference front() noexcept
+    [[nodiscard]] reference index_unchecked(size_type pos)
     {
-        return eles_[0];
+        return eles_[pos];
     }
 
-    const_reference front() const noexcept
+    [[nodiscard]] const_reference index_unchecked(size_type pos) const
     {
-        return eles_[0];
+        return eles_[pos];
     }
 
-    reference back() noexcept
+    [[nodiscard]] reference front() noexcept
     {
-        return eles_[N - 1];
+        return *begin();
     }
 
-    const_reference back() const noexcept
+    [[nodiscard]] const_reference front() const noexcept
     {
-        return eles_[N - 1];
+        return *cbegin();
     }
 
-    pointer data() noexcept
+    [[nodiscard]] reference back() noexcept
     {
-        return eles_;
+        return *end();
     }
 
-    const_pointer data() const noexcept
+    [[nodiscard]] const_reference back() const noexcept
     {
-        return eles_;
+        return *cend();
     }
 
-    iterator begin() noexcept
-    {
-        return eles_;
-    }
-
-    const_iterator begin() const noexcept
+    [[nodiscard]] pointer data() noexcept
     {
         return eles_;
     }
 
-    const_iterator cbegin() const noexcept
+    [[nodiscard]] const_pointer data() const noexcept
     {
         return eles_;
     }
 
-    iterator end() noexcept
+    [[nodiscard]] iterator begin() noexcept
+    {
+        return eles_;
+    }
+
+    [[nodiscard]] const_iterator begin() const noexcept
+    {
+        return eles_;
+    }
+
+    [[nodiscard]] const_iterator cbegin() const noexcept
+    {
+        return eles_;
+    }
+
+    [[nodiscard]] iterator end() noexcept
     {
         return eles_ + N;
     }
 
-    const_iterator end() const noexcept
+    [[nodiscard]] const_iterator end() const noexcept
     {
         return eles_ + N;
     }
 
-    const_iterator cend() const noexcept
+    [[nodiscard]] const_iterator cend() const noexcept
     {
         return eles_ + N;
     }
 
-    reverse_iterator rbegin() noexcept
+    [[nodiscard]] constexpr reverse_iterator rbegin() noexcept
     {
-        return {end()};
+        return ::std::make_reverse_iterator(end());
     }
 
-    const_reverse_iterator rbegin() const noexcept
+    [[nodiscard]] constexpr const_reverse_iterator rbegin() const noexcept
     {
-        return {end()};
+        return ::std::make_reverse_iterator(end());
     }
 
-    const_reverse_iterator crbegin() const noexcept
+    [[nodiscard]] constexpr const_reverse_iterator crbegin() const noexcept
     {
-        return {end()};
+        return ::std::make_reverse_iterator(cend());
     }
 
-    reverse_iterator rend() noexcept
+    [[nodiscard]] constexpr reverse_iterator rend() noexcept
     {
-        return {begin()};
+        return ::std::make_reverse_iterator(begin());
     }
 
-    const_reverse_iterator rend() const noexcept
+    [[nodiscard]] constexpr const_reverse_iterator rend() const noexcept
     {
-        return {begin()};
+        return ::std::make_reverse_iterator(begin());
     }
 
-    const_reverse_iterator crend() const noexcept
+    [[nodiscard]] constexpr const_reverse_iterator crend() const noexcept
     {
-        return {begin()};
+        return ::std::make_reverse_iterator(cbegin());
     }
 
-    constexpr bool empty() const noexcept
+    [[nodiscard]] constexpr bool empty() const noexcept
     {
         return false;
     }
 
-    constexpr size_type size() const noexcept
+    [[nodiscard]] constexpr size_type size() const noexcept
     {
         return N;
     }
 
-    constexpr size_type max_size() const noexcept
+    [[nodiscard]] constexpr size_type max_size() const noexcept
     {
         return N;
     }
 
     void fill(const_reference value) noexcept(::std::is_nothrow_copy_assignable_v<T>)
     {
-        for (size_type i = 0; i != N; ++i)
+        for (auto i = size_type(0); i != N; ++i)
         {
             eles_[i] = value;
         }
@@ -180,7 +172,7 @@ struct array
 
     void swap(array &other) noexcept(::std::is_nothrow_swappable_v<T>)
     {
-        for (size_t i = 0; i != N; ++i)
+        for (auto i = size_type(0); i != N; ++i)
         {
             ::std::swap(eles_[i], other.eles_[i]);
         }
@@ -203,127 +195,127 @@ public:
     using reverse_iterator = ::std::reverse_iterator<iterator>;
     using const_reverse_iterator = ::std::reverse_iterator<const_iterator>;
 
-    constexpr reference at(size_type pos) noexcept
+    [[noreturn]] constexpr reference operator[](size_type pos) noexcept
     {
-        static_assert(false, "The length of this array is 0.");
+        assert_condition(false);
     }
 
-    constexpr const_reference at(size_type pos) const noexcept
+    [[noreturn]] constexpr const_reference operator[](size_type pos) const noexcept
     {
-        static_assert(false, "The length of this array is 0.");
+        assert_condition(false);
     }
 
-    constexpr reference operator[](size_type pos) noexcept
+    [[noreturn]] reference index_unchecked(size_type pos)
     {
-        static_assert(false, "The length of this array is 0.");
+        assert_condition(false);
     }
 
-    constexpr const_reference operator[](size_type pos) const noexcept
+    [[noreturn]] const_reference index_unchecked(size_type pos) const
     {
-        static_assert(false, "The length of this array is 0.");
+        assert_condition(false);
     }
 
-    constexpr reference front() noexcept
+    [[noreturn]] constexpr reference front() noexcept
     {
-        static_assert(false, "The length of this array is 0.");
+        assert_condition(false);
     }
 
-    constexpr const_reference front() const noexcept
+    [[noreturn]] constexpr const_reference front() const noexcept
     {
-        static_assert(false, "The length of this array is 0.");
+        assert_condition(false);
     }
 
-    constexpr reference back() noexcept
+    [[noreturn]] constexpr reference back() noexcept
     {
-        static_assert(false, "The length of this array is 0.");
+        assert_condition(false);
     }
 
-    constexpr const_reference back() const noexcept
+    [[noreturn]] constexpr const_reference back() const noexcept
     {
-        static_assert(false, "The length of this array is 0.");
+        assert_condition(false);
     }
 
-    constexpr pointer data() noexcept
-    {
-        return nullptr;
-    }
-
-    constexpr const_pointer data() const noexcept
+    [[nodiscard]] constexpr pointer data() noexcept
     {
         return nullptr;
     }
 
-    constexpr iterator begin() noexcept
+    [[nodiscard]] constexpr const_pointer data() const noexcept
     {
         return nullptr;
     }
 
-    constexpr const_iterator begin() const noexcept
+    [[nodiscard]] constexpr iterator begin() noexcept
     {
         return nullptr;
     }
 
-    constexpr const_iterator cbegin() const noexcept
+    [[nodiscard]] constexpr const_iterator begin() const noexcept
     {
         return nullptr;
     }
 
-    constexpr iterator end() noexcept
+    [[nodiscard]] constexpr const_iterator cbegin() const noexcept
     {
         return nullptr;
     }
 
-    constexpr const_iterator end() const noexcept
+    [[nodiscard]] constexpr iterator end() noexcept
     {
         return nullptr;
     }
 
-    constexpr const_iterator cend() const noexcept
+    [[nodiscard]] constexpr const_iterator end() const noexcept
     {
         return nullptr;
     }
 
-    constexpr reverse_iterator rbegin() noexcept
+    [[nodiscard]] constexpr const_iterator cend() const noexcept
     {
         return nullptr;
     }
 
-    constexpr const_reverse_iterator rbegin() const noexcept
+    [[nodiscard]] constexpr reverse_iterator rbegin() noexcept
     {
         return nullptr;
     }
 
-    constexpr const_reverse_iterator crbegin() const noexcept
+    [[nodiscard]] constexpr const_reverse_iterator rbegin() const noexcept
     {
         return nullptr;
     }
 
-    constexpr reverse_iterator rend() noexcept
+    [[nodiscard]] constexpr const_reverse_iterator crbegin() const noexcept
     {
         return nullptr;
     }
 
-    constexpr const_reverse_iterator rend() const noexcept
+    [[nodiscard]] constexpr reverse_iterator rend() noexcept
     {
         return nullptr;
     }
 
-    constexpr const_reverse_iterator crend() const noexcept
+    [[nodiscard]] constexpr const_reverse_iterator rend() const noexcept
     {
         return nullptr;
     }
 
-    constexpr bool empty() const noexcept
+    [[nodiscard]] constexpr const_reverse_iterator crend() const noexcept
+    {
+        return nullptr;
+    }
+
+    [[nodiscard]] constexpr bool empty() const noexcept
     {
         return true;
     }
 
-    constexpr size_type size() const noexcept
+    [[nodiscard]] constexpr size_type size() const noexcept
     {
         return 0;
     }
 
-    constexpr size_type max_size() const noexcept
+    [[nodiscard]] constexpr size_type max_size() const noexcept
     {
         return 0;
     }
@@ -340,7 +332,7 @@ public:
 template <class T, ::std::size_t N>
 bool operator==(const array<T, N> &lhs, const array<T, N> &rhs)
 {
-    for (size_t i = 0; i != N; ++i)
+    for (auto i = ::std::size_t(0); i != N; ++i)
     {
         if (lhs[i] != rhs[i])
         {
@@ -350,6 +342,20 @@ bool operator==(const array<T, N> &lhs, const array<T, N> &rhs)
     return true;
 }
 
+#if __cplusplus >= 202002L
+template <typename T, ::std::size_t N>
+constexpr auto operator<=>(const std::array<T, N> &lhs, const std::array<T, N> &rhs)
+{
+    for (auto i = ::std::size_t(0); i != N; ++i)
+    {
+        auto cmp = lhs[i] <=> rhs[i];
+        if (cmp != 0)
+        {
+            return cmp;
+        }
+    }
+}
+#else
 template <class T, ::std::size_t N>
 bool operator!=(const array<T, N> &lhs, const array<T, N> &rhs)
 {
@@ -359,7 +365,7 @@ bool operator!=(const array<T, N> &lhs, const array<T, N> &rhs)
 template <class T, ::std::size_t N>
 bool operator<(const array<T, N> &lhs, const array<T, N> &rhs)
 {
-    for (size_t i = 0; i != N; ++i)
+    for (auto i = ::std::size_t(0); i != N; ++i)
     {
         if (lhs[i] < rhs[i])
         {
@@ -372,7 +378,7 @@ bool operator<(const array<T, N> &lhs, const array<T, N> &rhs)
 template <class T, ::std::size_t N>
 bool operator<=(const array<T, N> &lhs, const array<T, N> &rhs)
 {
-    for (size_t i = 0; i != N; ++i)
+    for (auto i = ::std::size_t(0); i != N; ++i)
     {
         if (lhs[i] <= rhs[i])
         {
@@ -393,27 +399,28 @@ bool operator>=(const array<T, N> &lhs, const array<T, N> &rhs)
 {
     return !(lhs <= rhs);
 }
+#endif
 
 template <::std::size_t I, typename T, ::std::size_t N>
-constexpr T &get(array<T, N> &a) noexcept
+[[nodiscard]] constexpr T &get(array<T, N> &a) noexcept
 {
     return a[I];
 }
 
 template <::std::size_t I, typename T, ::std::size_t N>
-T &&get(array<T, N> &&a) noexcept
+[[nodiscard]] T &&get(array<T, N> &&a) noexcept
 {
     return a[I];
 }
 
 template <::std::size_t I, typename T, ::std::size_t N>
-const T &get(const array<T, N> &a) noexcept
+[[nodiscard]] const T &get(const array<T, N> &a) noexcept
 {
     return a[I];
 }
 
 template <::std::size_t I, typename T, ::std::size_t N>
-const T &&get(const array<T, N> &&a) noexcept
+[[nodiscard]] const T &&get(const array<T, N> &&a) noexcept
 {
     return a[I];
 }

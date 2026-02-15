@@ -20,5 +20,14 @@ namespace utils
     ::std::abort();
 #endif
 }
+
+inline constexpr void assert_condition(bool condition) noexcept
+{
+    if (!condition)
+    {
+        terminate();
+    }
+}
+
 } // namespace utils
 } // namespace evqovv
