@@ -18,17 +18,20 @@ public:
     mutex(mutex &&) = delete;
     mutex &operator=(mutex &&) = delete;
 
-    constexpr mutex()
+    mutex() noexcept
     {
-        if (::pthread_mutex_init(&mutex_, nullptr) != 0)
+        if (::pthread_mutex_init(&mutex_, nullptr) != 0) [[unlikely]]
         {
-            throw_system_exception("pthread_mutex_init failed: ");
+            terminate();
         }
     }
 
     ~mutex()
     {
-        ::pthread_mutex_destroy(&mutex_);
+        if (::pthread_mutex_destroy(&mutex_) != 0) [[unlikely]]
+        {
+            terminate();
+        }
     }
 
     void lock()
