@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdlib>
+#include <system_error>
 
 namespace evqovv
 {
@@ -27,6 +28,11 @@ inline constexpr void assert_condition(bool condition) noexcept
     {
         terminate();
     }
+}
+
+[[noreturn]] inline void throw_system_exception(const char *what)
+{
+    throw std::system_error(errno, std::generic_category(), what);
 }
 
 } // namespace utils
