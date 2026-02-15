@@ -13,8 +13,6 @@ namespace evqovv
 {
 namespace utils
 {
-namespace cxx20
-{
 namespace vector_detail
 {
 template <typename It, typename Alloc>
@@ -933,6 +931,5 @@ constexpr typename vector<T, Alloc>::size_type erase_if(vector<T, Alloc> &c, Pre
     c.erase(dest, last);
     return old_size - c.size();
 }
-} // namespace cxx20
 } // namespace utils
 } // namespace evqovv
