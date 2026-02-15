@@ -1,6 +1,8 @@
 #pragma once
 
+#include "helper.hpp"
 #include <algorithm>
+#include <compare>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
@@ -232,18 +234,21 @@ public:
     {
         reserve(count);
 
-        for (size_type i = 0; i != (count < size_) ? count : size_; ++i)
+        for (auto i = size_type(0); i != (count < size_) ? count : size_; ++i)
         {
             data_[i] = value;
         }
+
         if (count < size_)
         {
             vector_detail::destroy_range(alloc_, data_ + count, data_ + size_);
         }
+
         if (count > size_)
         {
             vector_detail::uninitialized_fill(alloc_, data_ + size_, data_ + size_ + count, value);
         }
+
         size_ = count;
     }
 
@@ -253,7 +258,7 @@ public:
         auto count = last - first;
         reserve(count);
 
-        for (size_type i = 0; i != (count < size_) ? count : size_; ++i, (void)++first)
+        for (auto i = size_type(0); i != (count < size_) ? count : size_; ++i, (void)++first)
         {
             data_[i] = *first;
         }
@@ -262,10 +267,12 @@ public:
         {
             vector_detail::destroy_range(alloc_, data_ + count, data_ + size_);
         }
+
         if (count > size_)
         {
             vector_detail::uninitialized_copy(alloc_, first, last, data_ + size_, data_ + size_ + count);
         }
+
         size_ = count;
     }
 
@@ -289,6 +296,7 @@ public:
             cap_ = 0;
             alloc_ = other.alloc_;
         }
+
         assign(other.cbegin(), other.cend());
 
         return *this;
@@ -327,8 +335,9 @@ public:
     {
         if (size_ <= pos) [[unlikely]]
         {
-            ::std::abort();
+            terminate();
         }
+
         return *(data_ + pos);
     }
 
@@ -336,8 +345,9 @@ public:
     {
         if (size_ <= pos) [[unlikely]]
         {
-            ::std::abort();
+            terminate();
         }
+
         return *(data_ + pos);
     }
 
@@ -355,8 +365,9 @@ public:
     {
         if (empty()) [[unlikely]]
         {
-            ::std::abort();
+            terminate();
         }
+
         return *data_;
     }
 
@@ -364,8 +375,9 @@ public:
     {
         if (empty()) [[unlikely]]
         {
-            ::std::abort();
+            terminate();
         }
+
         return *data_;
     }
 
@@ -383,8 +395,9 @@ public:
     {
         if (empty()) [[unlikely]]
         {
-            ::std::abort();
+            terminate();
         }
+
         return *(data_ + size_ - 1);
     }
 
@@ -392,8 +405,9 @@ public:
     {
         if (empty()) [[unlikely]]
         {
-            ::std::abort();
+            terminate();
         }
+
         return *(data_ + size_ - 1);
     }
 
@@ -599,8 +613,9 @@ public:
     {
         if (empty()) [[unlikely]]
         {
-            ::std::abort();
+            terminate();
         }
+
         vector_detail::destroy_at(alloc_, data_ + size_ - 1);
         --size_;
     }
@@ -611,6 +626,7 @@ public:
         {
             truncate_to(new_size);
         }
+
         if (new_size > size_)
         {
             append_default_n(new_size - size_);
@@ -623,6 +639,7 @@ public:
         {
             truncate_to(new_size);
         }
+
         if (new_size > size_)
         {
             append_fill_n(new_size - size_, value);
@@ -633,9 +650,11 @@ public:
                                                ::std::is_nothrow_swappable_v<Alloc>))
     {
         using ::std::swap;
+
         swap(data_, other.data_);
         swap(size_, other.size_);
         swap(cap_, other.cap_);
+
         if constexpr (atraits_t::propagate_on_container_swap::value)
         {
             swap(alloc_, other.alloc_);
@@ -646,10 +665,12 @@ private:
     [[nodiscard]] size_type next_capacity(size_type required)
     {
         size_type cap = cap_ < 8 ? 8 : cap_;
+
         while (cap < required)
         {
             cap += cap / 2;
         }
+
         return cap;
     }
 
@@ -659,15 +680,18 @@ private:
         {
             if (pos != cbegin()) [[unlikely]]
             {
-                ::std::abort();
+                terminate();
             }
+
             return 0;
         }
+
         auto idx = static_cast<size_type>(pos - cbegin());
         if (idx > size_) [[unlikely]]
         {
-            ::std::abort();
+            terminate();
         }
+
         return idx;
     }
 
@@ -693,6 +717,7 @@ private:
             size_ += count;
             ::std::rotate(data_ + pos_i, old_end, data_ + size_);
         }
+
         return data_ + pos_i;
     }
 
@@ -720,6 +745,7 @@ private:
             size_ += count;
             ::std::rotate(data_ + pos_i, old_end, data_ + size_);
         }
+
         return data_ + pos_i;
     }
 
@@ -746,6 +772,7 @@ private:
             ++size_;
             ::std::rotate(data_ + pos_i, old_end, data_ + size_);
         }
+
         return data_ + pos_i;
     }
 
@@ -769,13 +796,13 @@ private:
             vector_detail::construct_at(alloc_, data_ + size_, ::std::forward<Args>(args)...);
             ++size_;
         }
+
         return end();
     }
 
     iterator erase_impl(const_iterator first, const_iterator last)
     {
         auto erase_count = last - first;
-
         auto dst = const_cast<iterator>(first);
         auto src = dst + erase_count;
         auto old_end = data_ + size_;
@@ -867,7 +894,7 @@ bool operator==(const vector<T, Alloc> &lhs, const vector<T, Alloc> &rhs)
     return true;
 }
 
-template <class T, class Alloc>
+template <typename T, class Alloc>
 constexpr auto operator<=>(const vector<T, Alloc> &lhs, const vector<T, Alloc> &rhs)
 {
     auto min_size = (lhs.size() < rhs.size()) ? lhs.size() : rhs.size();
@@ -879,6 +906,7 @@ constexpr auto operator<=>(const vector<T, Alloc> &lhs, const vector<T, Alloc> &
             return cmp;
         }
     }
+
     return lhs.size() <=> rhs.size();
 }
 
@@ -893,6 +921,7 @@ constexpr typename vector<T, Alloc>::size_type erase(vector<T, Alloc> &c, const 
     {
         return 0;
     }
+
     auto dest = first;
     ++first;
     for (; first != last; (void)++first)
@@ -903,7 +932,9 @@ constexpr typename vector<T, Alloc>::size_type erase(vector<T, Alloc> &c, const 
             ++dest;
         }
     }
+
     c.erase(dest, last);
+
     return old_size - c.size();
 }
 
@@ -918,6 +949,7 @@ constexpr typename vector<T, Alloc>::size_type erase_if(vector<T, Alloc> &c, Pre
     {
         return 0;
     }
+
     auto dest = first;
     ++first;
     for (; first != last; (void)++first)
@@ -928,7 +960,9 @@ constexpr typename vector<T, Alloc>::size_type erase_if(vector<T, Alloc> &c, Pre
             ++dest;
         }
     }
+
     c.erase(dest, last);
+
     return old_size - c.size();
 }
 } // namespace utils
